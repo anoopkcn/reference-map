@@ -128,7 +128,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   openalexEmail: '',
   sourceMode: 'auto',
-  listLimit: 500,
+  listLimit: 100,
   graphExpandLimit: 100,
   autoExpandSeeds: true,
   labelMode: 'auto',

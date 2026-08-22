@@ -39,6 +39,17 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         </div>
 
         <div className="field">
+          <span>Theme</span>
+          <div className="segmented">
+            {(['system', 'light', 'dark'] as Theme[]).map((t) => (
+              <button key={t} className={settings.theme === t ? 'active' : ''} onClick={() => update({ theme: t })}>
+                {t[0]!.toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="field">
           <span>Data sources</span>
           <div className="segmented">
             {(['auto', 's2', 'openalex'] as SourceMode[]).map((m) => (
@@ -57,7 +68,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           <span>Semantic Scholar API key <span className="faint">(optional)</span></span>
           <div className="row">
             <input className="input mono" type={showKey ? 'text' : 'password'} value={key} onChange={(e) => setKey(e.target.value)} onBlur={commitKey} placeholder="Paste your key for higher rate limits" autoComplete="off" spellCheck={false} />
-            <button className="btn icon" onClick={() => setShowKey((v) => !v)} title={showKey ? 'Hide' : 'Show'}><Icon name={showKey ? 'moon' : 'sun'} /></button>
+            <button className="btn icon" onClick={() => setShowKey((v) => !v)} title={showKey ? 'Hide' : 'Show'} aria-label={showKey ? 'Hide API key' : 'Show API key'} aria-pressed={showKey}><Icon name="eye" /></button>
           </div>
           <span className="faint small">
             Stored only in this browser. Without a key, requests are spaced ~1/s and may be throttled. Get one at{' '}
@@ -94,17 +105,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             {(['seeds', 'auto', 'all'] as LabelMode[]).map((m) => (
               <button key={m} className={settings.labelMode === m ? 'active' : ''} onClick={() => update({ labelMode: m })}>
                 {m === 'seeds' ? 'Seeds only' : m === 'auto' ? 'Auto' : 'All'}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="field">
-          <span>Theme</span>
-          <div className="segmented">
-            {(['system', 'light', 'dark'] as Theme[]).map((t) => (
-              <button key={t} className={settings.theme === t ? 'active' : ''} onClick={() => update({ theme: t })}>
-                {t[0]!.toUpperCase() + t.slice(1)}
               </button>
             ))}
           </div>
