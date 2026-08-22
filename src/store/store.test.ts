@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { MemoryCache } from '../api/cache';
+import { MemoryCache, type CacheAdapter } from '../api/cache';
 import { NetworkError, NotFoundError, UnsupportedLookupError } from '../api/errors';
 import { ProviderStats, type ListResult, type Provider, type SearchResult } from '../api/provider';
 import { RequestQueue, type EnqueueOptions } from '../api/queue';
@@ -43,6 +43,8 @@ class FakeProvider implements Provider {
   calls: string[] = [];
   fail: unknown = null;
   failBatch: unknown = null;
+  listDelays = new Map<number, number>();
+  listAborted = 0;
   constructor(readonly id: ProviderId) {}
   private keyOf(lookup: string): string | null {
     const m = /^(?:DOI:|doi:)(10\.1\/([a-z]))$/i.exec(lookup);
@@ -81,11 +83,24 @@ class FakeProvider implements Provider {
       return mk(this.id, k, level);
     });
   }
-  getList(native: string, kind: ListKind, _limit: number, _o?: EnqueueOptions): Promise<ListResult> {
-    return this.go(`${kind}:${native}`, () => {
+  async getList(native: string, kind: ListKind, limit: number, _o?: EnqueueOptions): Promise<ListResult> {
+    const delay = this.listDelays.get(limit) ?? 0;
+    if (delay) {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, delay);
+        _o?.signal?.addEventListener('abort', () => {
+          clearTimeout(timer);
+          this.listAborted++;
+          reject(new DOMException('Aborted', 'AbortError'));
+        }, { once: true });
+      });
+    }
+    return this.go(`${kind}:${native}:${limit}`, () => {
       const k = this.keyOf(native)!;
-      const papers = LISTS[k]![kind].map((x) => mk(this.id, x));
-      return { ids: papers.map((p) => p.paperId), papers, hasMore: k === 'S' && kind === 'cites', total: k === 'S' && kind === 'cites' ? 453 : papers.length };
+      const all = LISTS[k]![kind];
+      const papers = all.slice(0, limit).map((x) => mk(this.id, x));
+      const total = k === 'S' && kind === 'cites' ? 453 : all.length;
+      return { ids: papers.map((p) => p.paperId), papers, hasMore: total > papers.length, total };
     });
   }
   async getBatch(lookups: readonly Lookup[], level: DetailLevel, _o?: EnqueueOptions) {
@@ -143,6 +158,7 @@ describe('store (two providers)', () => {
     expect(s.lists.get('doi:10.1/s')!.refs).toMatchObject({ status: 'ready', provider: 's2', total: 2, ids: ['doi:10.1/a', 'doi:10.1/b'] });
     expect(s.lists.get('doi:10.1/s')!.cites!.total).toBe(453);
     expect(s.papers.get('doi:10.1/a')!.sources).toEqual({ s2: 'shaA' });
+    expect(s.papers.get('doi:10.1/s')!.detailLevel).toBe('list');
     await s.loadList('doi:10.1/s', 'refs');
     expect(s2.calls.filter((c) => c.startsWith('refs')).length).toBe(1);
   });
@@ -190,6 +206,89 @@ describe('store (two providers)', () => {
     expect(oa.calls).toEqual([]);
     expect(b.getState().seeds[0]!.status).toBe('ready');
     expect(b.getState().graph.nodeCount).toBe(4);
+  });
+
+  it('upgrades a cached prefix for a larger list, while a complete short list satisfies any limit', async () => {
+    const store = make({ settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().loadList('doi:10.1/s', 'cites', { limit: 25 });
+    expect(store.getState().lists.get('doi:10.1/s')!.cites).toMatchObject({ loadedLimit: 25, complete: false });
+    await store.getState().loadList('doi:10.1/s', 'cites', { limit: 100 });
+    expect(s2.calls.filter((call) => call.startsWith('cites:')).length).toBe(2);
+    expect(store.getState().lists.get('doi:10.1/s')!.cites).toMatchObject({ loadedLimit: 100, complete: false });
+
+    await store.getState().addSeeds(['DOI:10.1/a']);
+    await store.getState().loadList('doi:10.1/a', 'refs', { limit: 25 });
+    const calls = s2.calls.filter((call) => call.startsWith('refs:shaA')).length;
+    expect(store.getState().lists.get('doi:10.1/a')!.refs).toMatchObject({ loadedLimit: 25, complete: true });
+    await store.getState().loadList('doi:10.1/a', 'refs', { limit: 500 });
+    expect(s2.calls.filter((call) => call.startsWith('refs:shaA')).length).toBe(calls);
+  });
+
+  it('concurrent list requests converge on the larger result even when the short request finishes last', async () => {
+    const store = make({ settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    s2.listDelays.set(25, 20);
+    const short = store.getState().loadList('doi:10.1/s', 'cites', { limit: 25 });
+    const long = store.getState().loadList('doi:10.1/s', 'cites', { limit: 200 });
+    await Promise.all([short, long]);
+    expect(store.getState().lists.get('doi:10.1/s')!.cites).toMatchObject({ loadedLimit: 200, complete: false });
+    expect(s2.calls.filter((call) => call.startsWith('cites:')).length).toBe(2);
+  });
+
+  it('keeps a shared list request alive for one consumer and aborts fully abandoned work without poisoning state', async () => {
+    const store = make({ settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    s2.listDelays.set(75, 20);
+    const first = new AbortController();
+    const second = new AbortController();
+    const abandoned = store.getState().loadList('doi:10.1/s', 'cites', { limit: 75, signal: first.signal });
+    const survivor = store.getState().loadList('doi:10.1/s', 'cites', { limit: 75, signal: second.signal });
+    first.abort();
+    expect((await abandoned).status).not.toBe('error');
+    expect((await survivor).status).toBe('ready');
+    expect(s2.listAborted).toBe(0);
+    expect(s2.calls.filter((call) => call.startsWith('cites:')).length).toBe(1);
+
+    s2.listDelays.set(125, 50);
+    const only = new AbortController();
+    const cancelled = store.getState().loadList('doi:10.1/s', 'cites', { limit: 125, signal: only.signal });
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    only.abort();
+    expect((await cancelled).status).not.toBe('error');
+    await settle();
+    expect(s2.listAborted).toBe(1);
+    expect(store.getState().lists.get('doi:10.1/s')!.cites).toMatchObject({ status: 'ready', loadedLimit: 75 });
+    s2.listDelays.delete(125);
+    expect((await store.getState().loadList('doi:10.1/s', 'cites', { limit: 125 })).status).toBe('ready');
+  });
+
+  it('waits for startup cache adoption once and restores a warm seed without a network request', async () => {
+    const startup = new MemoryCache();
+    const persistent = new MemoryCache();
+    const cached = mk('s2', 'S', 'list');
+    cached.paperId = 'doi:10.1/s';
+    await persistent.putPapers([cached]);
+    await persistent.putLookups([['doi:10.1/s', { paperId: 'doi:10.1/s', fetchedAt: 10 }]]);
+    let release!: (cache: CacheAdapter) => void;
+    const ready = new Promise<CacheAdapter>((resolve) => (release = resolve));
+    const id = new Identity(startup);
+    const store = createAppStore({
+      router: new Router({ providers: [s2, oa], identity: id, getMode: () => store.getState().settings.sourceMode }),
+      identity: id,
+      cache: startup,
+      settings: { ...DEFAULT_SETTINGS, autoExpandSeeds: false },
+      toastMs: 0,
+      now: () => 10,
+    });
+    void store.prepareCache(ready);
+    const adding = store.getState().addSeeds(['DOI:10.1/s']);
+    expect(store.getState().seeds[0]!.status).toBe('resolving');
+    release(persistent);
+    await adding;
+    expect(store.getState().seeds[0]).toMatchObject({ status: 'ready', paperId: 'doi:10.1/s' });
+    expect(s2.calls).toEqual([]);
+    expect(oa.calls).toEqual([]);
   });
 
   it('uses batch for many lookups, falls back per id when a batch fails, records not-found', async () => {

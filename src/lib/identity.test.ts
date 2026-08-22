@@ -4,6 +4,7 @@ import { Identity, arxivFromDoi, keysOf, lookupToAliasKey, normDoi, type AliasEn
 
 class MemStore implements AliasStore {
   m = new Map<string, AliasEntry>();
+  batchWrites = 0;
   async getLookups(keys: readonly string[]) {
     const out = new Map<string, AliasEntry>();
     for (const k of keys) {
@@ -14,6 +15,10 @@ class MemStore implements AliasStore {
   }
   async putLookup(key: string, v: AliasEntry) {
     this.m.set(key, v);
+  }
+  async putLookups(entries: readonly (readonly [string, AliasEntry])[]) {
+    this.batchWrites++;
+    for (const [key, v] of entries) this.m.set(key, v);
   }
 }
 
@@ -76,6 +81,16 @@ describe('identity helpers', () => {
 });
 
 describe('Identity.assign', () => {
+  it('persists every alias from a normalization batch with one store write', async () => {
+    const store = new MemStore();
+    const id = new Identity(store, () => 1);
+    await id.assign([
+      mk({ sources: { s2: 'a' }, externalIds: { DOI: '10.1/a', PubMed: '1' } }),
+      mk({ sources: { openalex: 'W2' }, externalIds: { DOI: '10.1/b', MAG: '2' } }),
+    ]);
+    expect(store.batchWrites).toBe(1);
+    expect(store.m.size).toBe(6);
+  });
   it('mints by priority and merges across providers via shared keys', async () => {
     const store = new MemStore();
     const id = new Identity(store, () => 1);

@@ -42,7 +42,6 @@ export class GraphModel {
   readonly nodes = new Map<PaperId, GraphNode>();
   /** idx → id. Append-only between rebuilds. */
   readonly order: PaperId[] = [];
-  readonly edges = new Set<string>();
   /** citing → set of cited */
   readonly outgoing = new Map<PaperId, Set<PaperId>>();
   /** cited → set of citing */
@@ -57,6 +56,13 @@ export class GraphModel {
   /** Largest citation count among current nodes (radius scale). */
   maxCitations = 0;
   private diff: GraphDiff = freshDiff();
+  /** Debug/test compatibility without allocating a string key for every stored edge. */
+  readonly edges = {
+    has: (key: string): boolean => {
+      const split = key.indexOf('>');
+      return split > 0 && (this.outgoing.get(key.slice(0, split))?.has(key.slice(split + 1)) ?? false);
+    },
+  };
 
   get nodeCount(): number {
     return this.order.length;
@@ -84,6 +90,16 @@ export class GraphModel {
     if (existed) this.version++;
     this.recompute(papers);
     return n;
+  }
+
+  /** Add several seeds as one derived-state update. */
+  addSeeds(entries: readonly (readonly [PaperId, Paper])[], papers: ReadonlyMap<PaperId, Paper>): void {
+    if (entries.length === 0) return;
+    for (const [id, paper] of entries) {
+      this.addNode(id, paper, -1);
+      this.seeds.add(id);
+    }
+    this.recompute(papers);
   }
 
   /** Returns true if the node was newly added. */
@@ -115,11 +131,9 @@ export class GraphModel {
     const a = this.nodes.get(citing);
     const b = this.nodes.get(cited);
     if (!a || !b) return false;
-    const key = `${citing}>${cited}`;
-    if (this.edges.has(key)) return false;
-    this.edges.add(key);
     let out = this.outgoing.get(citing);
     if (!out) this.outgoing.set(citing, (out = new Set()));
+    if (out.has(cited)) return false;
     out.add(cited);
     let inc = this.incoming.get(cited);
     if (!inc) this.incoming.set(cited, (inc = new Set()));
@@ -142,6 +156,7 @@ export class GraphModel {
     papers: ReadonlyMap<PaperId, Paper>,
     limit: number,
     getCachedList?: CachedListGetter,
+    recompute = true,
   ): { added: number } {
     const c = this.nodes.get(center);
     if (!c) return { added: 0 };
@@ -187,7 +202,7 @@ export class GraphModel {
         if (ci) for (const s of ci) if (this.nodes.has(s)) this.addEdge(s, id);
       }
     }
-    this.recompute(papers);
+    if (recompute) this.recompute(papers);
     return { added: newIds.length };
   }
 
@@ -254,7 +269,7 @@ export class GraphModel {
         progressed = true;
         // No cached-list discovery here: edges come only from the seeds' own lists, so removing a seed
         // also removes every connection that was discovered through it.
-        this.mergeNeighborhood(id, getCachedList(id, 'refs'), getCachedList(id, 'cites'), papers, limit);
+        this.mergeNeighborhood(id, getCachedList(id, 'refs'), getCachedList(id, 'cites'), papers, limit, undefined, false);
       }
     }
     for (const id of pinned) {
@@ -275,7 +290,6 @@ export class GraphModel {
   private clearInternal(): void {
     this.nodes.clear();
     this.order.length = 0;
-    this.edges.clear();
     this.outgoing.clear();
     this.incoming.clear();
     this.edgeSrc.length = 0;

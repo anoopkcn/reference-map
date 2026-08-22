@@ -83,6 +83,10 @@ export interface ListState {
   error?: string;
   /** Which provider supplied the list. */
   provider?: ProviderId;
+  /** Largest request this state satisfies. */
+  loadedLimit: number;
+  /** The provider reported that this is the complete list, not a capped prefix. */
+  complete: boolean;
 }
 
 export const NodeRole = { Seed: 0, Cited: 1, Citing: 2, Both: 3, Isolated: 4 } as const;

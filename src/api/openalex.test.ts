@@ -126,6 +126,31 @@ describe('OpenAlexClient', () => {
     expect(r.hasMore).toBe(true);
   });
 
+  it('runs independent reference chunks concurrently and preserves input order when they finish out of order', async () => {
+    const ids = Array.from({ length: 60 }, (_, i) => `https://openalex.org/W${100 + i}`);
+    const completed: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const fetchFn = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/works/W1') return new Response(JSON.stringify({ id: 'https://openalex.org/W1', referenced_works: ids }));
+      const filter = url.searchParams.get('filter')!;
+      const wanted = filter.replace('openalex:', '').split('|');
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, wanted[0] === 'W100' ? 20 : 1));
+      active--;
+      completed.push(wanted[0]!);
+      return new Response(JSON.stringify({ results: wanted.map((id) => w(Number(id.slice(1)))).reverse() }));
+    }) as typeof fetch;
+    const c = new OpenAlexClient({ queue: new RequestQueue({ concurrency: 2, minIntervalMs: 0 }), fetchFn });
+    const result = await c.getList('W1', 'refs', 60);
+    expect(maxActive).toBe(2);
+    expect(completed).toEqual(['W150', 'W100']);
+    expect(result.ids[0]).toBe('oa:W100');
+    expect(result.ids.at(-1)).toBe('oa:W159');
+  });
+
   it('cites: cursor paging sorted by citations, stops at limit, reports total', async () => {
     const f = mockFetch((u) => {
       const cursor = u.searchParams.get('cursor');

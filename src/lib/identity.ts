@@ -12,6 +12,7 @@ export interface AliasEntry {
 export interface AliasStore {
   getLookups(keys: readonly string[]): Promise<Map<string, AliasEntry>>;
   putLookup(key: string, v: AliasEntry): Promise<void>;
+  putLookups(entries: readonly (readonly [string, AliasEntry])[]): Promise<void>;
 }
 
 /** Canonical id kinds, most preferred first. */
@@ -151,10 +152,31 @@ export class Identity {
     void this.cache.putLookup(key, e);
   }
 
+  aliasMany(entries: readonly (readonly [AliasKey, PaperId])[]): void {
+    const writes: [AliasKey, AliasEntry][] = [];
+    for (const [key, id] of entries) {
+      const e = { paperId: id, fetchedAt: this.now() };
+      this.mem.set(key, e);
+      writes.push([key, e]);
+    }
+    void this.cache.putLookups(writes);
+  }
+
   negative(key: AliasKey): void {
     const e = { paperId: null, fetchedAt: this.now() };
     this.mem.set(key, e);
     void this.cache.putLookup(key, e);
+  }
+
+
+  negativeMany(keys: readonly AliasKey[]): void {
+    const writes: [AliasKey, AliasEntry][] = [];
+    for (const key of keys) {
+      const e = { paperId: null, fetchedAt: this.now() };
+      this.mem.set(key, e);
+      writes.push([key, e]);
+    }
+    void this.cache.putLookups(writes);
   }
 
   /**
@@ -169,6 +191,7 @@ export class Identity {
       const found = await this.cache.getLookups([...missing]);
       for (const [k, v] of found) this.mem.set(k, v);
     }
+    const writes = new Map<AliasKey, AliasEntry>();
     for (const { p, canon, extra } of keyed) {
       if (canon.length === 0) continue;
       let id: PaperId | undefined;
@@ -186,11 +209,16 @@ export class Identity {
       }
       for (const k of [...canon, ...extra]) {
         const e = this.mem.get(k);
-        if (!e || e.paperId === null) this.alias(k, id);
+        if (!e || e.paperId === null) {
+          const entry = { paperId: id, fetchedAt: this.now() };
+          this.mem.set(k, entry);
+          writes.set(k, entry);
+        }
         else if (e.paperId !== id) this.stats.conflicts++;
       }
       (p as Paper).paperId = id;
     }
+    if (writes.size) await this.cache.putLookups([...writes]);
     return papers as T[];
   }
 }

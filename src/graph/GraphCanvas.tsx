@@ -27,6 +27,9 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
   const viewRef = useRef<ViewTransform>({ k: 1, x: 0, y: 0 });
   const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
   const themeRef = useRef<GraphTheme | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const rectRef = useRef<DOMRect | null>(null);
+  const activeRef = useRef(true);
   const rafRef = useRef(0);
   const focusRef = useRef<{ focus: number; neighbors: Set<number> | null; version: number; gv: number }>({ focus: -1, neighbors: null, version: -1, gv: -1 });
   const userInteracted = useRef(false);
@@ -40,10 +43,12 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
   // ---- drawing ----
   const draw = () => {
     rafRef.current = 0;
+    if (!activeRef.current) return;
     const canvas = canvasRef.current;
     const theme = themeRef.current;
     if (!canvas || !theme) return;
-    const ctx = canvas.getContext('2d');
+    bridgeRef.current?.consumeTick();
+    const ctx = ctxRef.current;
     if (!ctx) return;
     const f = frameRef.current;
     const { w, h, dpr } = sizeRef.current;
@@ -68,7 +73,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current });
   };
   const markDirty = () => {
-    if (!rafRef.current) rafRef.current = requestAnimationFrame(draw);
+    if (activeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(draw);
   };
 
   useEffect(() => {
@@ -87,6 +92,9 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     const container = containerRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
+    activeRef.current = true;
+    ctxRef.current = canvas.getContext('2d');
+    if (!ctxRef.current) return;
     themeRef.current = readTheme(container);
     const frame = frameRef.current;
     let hadNodes = frame.n > 0;
@@ -147,16 +155,19 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     // sizing
     const resize = () => {
       const rect = container.getBoundingClientRect();
+      rectRef.current = canvas.getBoundingClientRect();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = Math.max(1, Math.round(rect.width));
       const h = Math.max(1, Math.round(rect.height));
       const first = sizeRef.current.w === 0;
       const prev = sizeRef.current;
       sizeRef.current = { w, h, dpr };
-      canvas.width = Math.round(w * dpr);
-      canvas.height = Math.round(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
+      if (prev.w !== w || prev.h !== h || prev.dpr !== dpr) {
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        canvas.style.width = `${w}px`;
+        canvas.style.height = `${h}px`;
+      }
       if (first) {
         viewRef.current = { k: 1, x: w / 2, y: h / 2 };
         if (zoomRef.current) select(canvas).call(zoomRef.current.transform, zoomIdentity.translate(w / 2, h / 2));
@@ -175,6 +186,32 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     };
     const ro = new ResizeObserver(resize);
     ro.observe(container);
+
+    // CSS tabs, page visibility and offscreen placement all pause worker and canvas work.
+    let intersecting = true;
+    const updateActive = () => {
+      const active = intersecting && !document.hidden;
+      if (activeRef.current === active) return;
+      activeRef.current = active;
+      bridge.setActive(active);
+      if (active) {
+        resize();
+        markDirty();
+      } else {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+    };
+    const io = new IntersectionObserver((entries) => {
+      intersecting = entries[0]?.isIntersecting ?? false;
+      updateActive();
+    });
+    io.observe(container);
+    document.addEventListener('visibilitychange', updateActive);
+    const refreshRect = () => {
+      rectRef.current = canvas.getBoundingClientRect();
+    };
+    window.addEventListener('scroll', refreshRect, { passive: true, capture: true });
 
     // zoom/pan
     const zoom = d3zoom<HTMLCanvasElement, unknown>()
@@ -213,7 +250,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       return [(sx - v.x) / v.k, (sy - v.y) / v.k];
     };
     const localPoint = (e: PointerEvent): [number, number] => {
-      const r = canvas.getBoundingClientRect();
+      const r = rectRef.current ?? canvas.getBoundingClientRect();
       return [e.clientX - r.left, e.clientY - r.top];
     };
     const setHover = (idx: number, sx: number, sy: number) => {
@@ -309,7 +346,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     };
 
     const onDblClick = (e: MouseEvent) => {
-      const r = canvas.getBoundingClientRect();
+      const r = rectRef.current ?? canvas.getBoundingClientRect();
       const idx = hitTestNode(frame, viewRef.current, e.clientX - r.left, e.clientY - r.top);
       const id = idx >= 0 ? frame.ids[idx] : undefined;
       if (!id) return;
@@ -336,6 +373,9 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     return () => {
       controlsRef.current = null;
       ro.disconnect();
+      io.disconnect();
+      document.removeEventListener('visibilitychange', updateActive);
+      window.removeEventListener('scroll', refreshRect, true);
       sel.on('.zoom', null);
       canvas.removeEventListener('dblclick', onDblClick);
       canvas.removeEventListener('pointerdown', onPointerDown);
@@ -351,6 +391,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       hoverRaf = 0;
       bridge.destroy();
       bridgeRef.current = null;
+      ctxRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

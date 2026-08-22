@@ -23,6 +23,8 @@ export class GraphBridge {
   private queued: { msg: MainToWorker; transfer?: Transferable[] }[] = [];
   private lastVersionSeen = -1;
   private rng = 1;
+  private active = true;
+  private pendingTick: Extract<WorkerToMain, { t: 'tick' }> | null = null;
 
   constructor(private store: AppStore, frame: FrameData, private cb: BridgeCallbacks) {
     this.frame = frame;
@@ -30,15 +32,17 @@ export class GraphBridge {
     this.worker.onmessage = (e: MessageEvent<WorkerToMain>) => this.onMessage(e.data);
     this.unsub = store.subscribe((s, prev) => {
       if (s.graphVersion !== prev.graphVersion) this.sync();
-      if (s.selectedId !== prev.selectedId || s.hoveredId !== prev.hoveredId || s.expanding !== prev.expanding) this.syncSelection();
+      if (s.selectedId !== prev.selectedId || s.hoveredId !== prev.hoveredId) this.syncFocus();
+      if (s.expanding !== prev.expanding) this.syncExpanding(prev.expanding);
     });
     // initial sync (the graph may already have content)
     this.sync(true);
-    this.syncSelection();
+    this.syncFocus();
   }
 
   destroy(): void {
     this.unsub();
+    this.releaseTick();
     this.worker.terminate();
   }
 
@@ -59,12 +63,12 @@ export class GraphBridge {
       return;
     }
     if (m.t === 'tick') {
-      const f = this.frame;
-      const n = Math.min(m.n, f.n);
-      if (n > 0) f.pos.set(m.pos.subarray(0, 2 * n));
-      f.alpha = m.alpha;
-      // hand the buffer back for reuse
-      this.worker.postMessage({ t: 'buffer', pos: m.pos } satisfies MainToWorker, [m.pos.buffer]);
+      if (!this.active) {
+        this.worker.postMessage({ t: 'buffer', pos: m.pos } satisfies MainToWorker, [m.pos.buffer]);
+        return;
+      }
+      this.releaseTick();
+      this.pendingTick = m;
       this.cb.onTick(m.alpha);
       return;
     }
@@ -76,6 +80,7 @@ export class GraphBridge {
     const s = this.store.getState();
     const g = s.graph;
     if (!force && g.version === this.lastVersionSeen) return;
+    this.releaseTick();
     this.lastVersionSeen = g.version;
     const diff = g.drainDiff();
     const f = this.frame;
@@ -191,11 +196,12 @@ export class GraphBridge {
       f.flags[i] = fl;
     }
     f.version++;
-    this.syncSelection(false);
+    this.syncFocus(false);
     this.cb.onStructure();
+    if (!this.active) this.send({ t: 'stop' });
   }
 
-  private syncSelection(notify = true): void {
+  private syncFocus(notify = true): void {
     const s = this.store.getState();
     const f = this.frame;
     const idxOf = (id: string | null) => (id ? (s.graph.getNode(id)?.idx ?? -1) : -1);
@@ -210,17 +216,59 @@ export class GraphBridge {
       f.selected = selected;
       changed = true;
     }
-    // expanding flags
-    for (let i = 0; i < f.n; i++) {
-      const id = f.ids[i]!;
-      const on = s.expanding.has(id);
-      const has = (f.flags[i]! & FLAG_EXPANDING) !== 0;
-      if (on !== has) {
-        f.flags[i] = on ? f.flags[i]! | FLAG_EXPANDING : f.flags[i]! & ~FLAG_EXPANDING;
+    if (changed && notify) this.cb.onStructure();
+  }
+
+  private syncExpanding(previous: ReadonlySet<string>): void {
+    const s = this.store.getState();
+    let changed = false;
+    for (const id of previous) {
+      if (s.expanding.has(id)) continue;
+      const idx = s.graph.getNode(id)?.idx;
+      if (idx !== undefined && idx < this.frame.n) {
+        this.frame.flags[idx] = this.frame.flags[idx]! & ~FLAG_EXPANDING;
         changed = true;
       }
     }
-    if (changed && notify) this.cb.onStructure();
+    for (const id of s.expanding) {
+      if (previous.has(id)) continue;
+      const idx = s.graph.getNode(id)?.idx;
+      if (idx !== undefined && idx < this.frame.n) {
+        this.frame.flags[idx] = this.frame.flags[idx]! | FLAG_EXPANDING;
+        changed = true;
+      }
+    }
+    if (changed) this.cb.onStructure();
+  }
+
+  /** Apply at most one worker position buffer per rendered animation frame. */
+  consumeTick(): void {
+    const tick = this.pendingTick;
+    if (!tick) return;
+    this.pendingTick = null;
+    const n = Math.min(tick.n, this.frame.n);
+    if (n > 0) this.frame.pos.set(tick.pos.subarray(0, 2 * n));
+    this.frame.alpha = tick.alpha;
+    this.worker.postMessage({ t: 'buffer', pos: tick.pos } satisfies MainToWorker, [tick.pos.buffer]);
+  }
+
+  private releaseTick(): void {
+    const tick = this.pendingTick;
+    if (!tick) return;
+    this.pendingTick = null;
+    this.worker.postMessage({ t: 'buffer', pos: tick.pos } satisfies MainToWorker, [tick.pos.buffer]);
+  }
+
+  setActive(active: boolean): void {
+    if (this.active === active) return;
+    this.active = active;
+    if (!active) {
+      this.releaseTick();
+      this.send({ t: 'stop' });
+    } else {
+      this.send({ t: 'reheat', alpha: Math.max(0.05, this.frame.alpha) });
+      this.cb.onStructure();
+    }
   }
 
   /** Deterministic starting position for a node without a parent: small spiral around the origin. */

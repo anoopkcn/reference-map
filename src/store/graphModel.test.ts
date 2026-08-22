@@ -146,4 +146,21 @@ describe('GraphModel', () => {
     expect(g.nodeCount).toBe(2);
     expect(g.neighbors('A')).toEqual(new Set(['S']));
   });
+
+  it('adds seed batches with one derived-state recomputation and one coherent diff', () => {
+    class CountingGraph extends GraphModel {
+      recomputes = 0;
+      override recompute(all: ReadonlyMap<string, Paper>) {
+        this.recomputes++;
+        super.recompute(all);
+      }
+    }
+    const g = new CountingGraph();
+    g.addSeeds([['S', papers.get('S')!], ['A', papers.get('A')!], ['S', papers.get('S')!]], papers);
+    expect(g.recomputes).toBe(1);
+    expect(g.nodeCount).toBe(2);
+    const diff = g.drainDiff();
+    expect(diff.newNodes).toEqual([0, 1]);
+    expect(diff.radiiChanged).toBe(true);
+  });
 });

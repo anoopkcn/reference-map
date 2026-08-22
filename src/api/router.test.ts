@@ -16,6 +16,9 @@ class MemStore implements AliasStore {
   async putLookup(key: string, v: AliasEntry) {
     this.m.set(key, v);
   }
+  async putLookups(entries: readonly (readonly [string, AliasEntry])[]) {
+    for (const [key, v] of entries) this.m.set(key, v);
+  }
 }
 
 const mk = (id: ProviderId, native: string, doi?: string): Paper => ({
@@ -169,6 +172,7 @@ describe('Router', () => {
     expect(await fast).toBeTruthy();
     expect(oa.calls).toEqual([]);
 
+    oa.stats.record('resolve', true, 1000); // keep S2 as the known-faster resolve provider for the hedge scenario
     s2.delayMs = 10_000;
     oa.delayMs = 300;
     const slow = r.resolve('DOI:10.1/slow', 'list');
@@ -193,6 +197,19 @@ describe('Router', () => {
     const l2 = await r.getList(oaSeed, 'cites', 10);
     expect(l2.provider).toBe('openalex');
     expect(l2.ids[0]).toBe('doi:10.1/shared'); // same canonical id as the S2 record
+  });
+
+  it('uses operation-specific latency history when choosing a provider', async () => {
+    const r = make();
+    s2.stats.record('detail', true, 10);
+    oa.stats.record('detail', true, 5000);
+    s2.stats.record('refs', true, 5000);
+    oa.stats.record('refs', true, 10);
+    const seed = { ...mk('s2', 'S', '10.1/s'), sources: { s2: 'S', openalex: 'W1' } };
+    await r.getList(seed, 'refs', 10);
+    expect(oa.calls.some((call) => call.startsWith('refs:'))).toBe(true);
+    await r.getPaper(seed, 'list');
+    expect(s2.calls.some((call) => call.startsWith('paper:'))).toBe(true);
   });
 
   it('getBatch partitions by capability and retries misses on the other provider', async () => {

@@ -61,21 +61,21 @@ export class Router {
   // ---------- public API ----------
 
   async resolve(lookup: Lookup, level: DetailLevel, o: EnqueueOptions = {}): Promise<Paper> {
-    const cands = this.candidates((p) => p.toNative(lookup) !== null, lookup);
+    const cands = this.candidates('resolve', (p) => p.toNative(lookup) !== null, lookup);
     const paper = await this.run('resolve', cands, (p, signal) => p.resolve(lookup, level, { ...o, signal }), o.signal);
     await this.identity.assign([paper]);
     return paper;
   }
 
   async getPaper(paper: Paper, level: DetailLevel, o: EnqueueOptions = {}): Promise<Paper> {
-    const cands = this.candidates((p) => p.lookupFor(paper) !== null, paper.paperId);
+    const cands = this.candidates('detail', (p) => p.lookupFor(paper) !== null, paper.paperId);
     const fresh = await this.run('detail', cands, (p, signal) => p.getPaper(p.lookupFor(paper)!, level, { ...o, signal }), o.signal);
     await this.identity.assign([fresh]);
     return fresh;
   }
 
   async getList(paper: Paper, kind: ListKind, limit: number, o: EnqueueOptions = {}): Promise<ListResult & { provider: ProviderId }> {
-    const cands = this.candidates((p) => p.lookupFor(paper) !== null, paper.paperId);
+    const cands = this.candidates(kind, (p) => p.lookupFor(paper) !== null, paper.paperId);
     const { value, provider } = await this.runTagged(kind, cands, (p, signal) => p.getList(p.lookupFor(paper)!, kind, limit, { ...o, signal }), o.signal);
     await this.identity.assign(value.papers);
     const seen = new Set<string>();
@@ -135,7 +135,7 @@ export class Router {
   }
 
   async search(query: string, limit: number, o: EnqueueOptions = {}): Promise<SearchResult & { provider: ProviderId }> {
-    const cands = this.candidates(() => true, query);
+    const cands = this.candidates('search', () => true, query);
     const { value, provider } = await this.runTagged('search', cands, (p, signal) => p.search(query, limit, { ...o, signal }), o.signal);
     await this.identity.assign(value.papers);
     return { ...value, provider };
@@ -191,9 +191,9 @@ export class Router {
     return scored.map((x) => x.p);
   }
 
-  private candidates(capable: (p: Provider) => boolean, what: string): Provider[] {
+  private candidates(op: OpKind, capable: (p: Provider) => boolean, what: string): Provider[] {
     const mode = this.getMode();
-    const cands = this.sortedProviders('detail').filter(capable);
+    const cands = this.sortedProviders(op).filter(capable);
     if (cands.length === 0) throw new UnsupportedLookupError(what, mode === 'auto' ? undefined : mode);
     return cands;
   }

@@ -31,6 +31,7 @@ export interface CacheAdapter {
   getLookup(lookup: Lookup): Promise<CachedLookup | undefined>;
   getLookups(lookups: readonly Lookup[]): Promise<Map<Lookup, CachedLookup>>;
   putLookup(lookup: Lookup, v: CachedLookup): Promise<void>;
+  putLookups(entries: readonly (readonly [Lookup, CachedLookup])[]): Promise<void>;
   clear(): Promise<void>;
 }
 
@@ -87,7 +88,8 @@ export class MemoryCache implements CacheAdapter {
     return freshest(PROVIDERS.map((pr) => this.lists.get(listKey(id, kind, pr))));
   }
   async putList(id: PaperId, kind: ListKind, list: CachedList) {
-    this.lists.set(listKey(id, kind, list.provider), list);
+    const key = listKey(id, kind, list.provider);
+    this.lists.set(key, preferList(this.lists.get(key), list));
   }
   async getLookup(lookup: Lookup) {
     return this.lookups.get(lookup.toLowerCase());
@@ -102,6 +104,9 @@ export class MemoryCache implements CacheAdapter {
   }
   async putLookup(lookup: Lookup, v: CachedLookup) {
     this.lookups.set(lookup.toLowerCase(), v);
+  }
+  async putLookups(entries: readonly (readonly [Lookup, CachedLookup])[]) {
+    for (const [lookup, v] of entries) this.lookups.set(lookup.toLowerCase(), v);
   }
   async clear() {
     this.papers.clear();
@@ -192,7 +197,12 @@ export class IdbCache implements CacheAdapter {
   }
   async putList(id: PaperId, kind: ListKind, list: CachedList) {
     try {
-      await this.db.put('lists', { ...list, key: listKey(id, kind, list.provider) });
+      const key = listKey(id, kind, list.provider);
+      const tx = this.db.transaction('lists', 'readwrite');
+      const previous = await tx.store.get(key);
+      const preferred = preferList(previous ? stripKey(previous) : undefined, list);
+      await tx.store.put({ ...preferred, key });
+      await tx.done;
     } catch {
       /* best effort */
     }
@@ -227,6 +237,16 @@ export class IdbCache implements CacheAdapter {
       /* best effort */
     }
   }
+  async putLookups(entries: readonly (readonly [Lookup, CachedLookup])[]) {
+    if (entries.length === 0) return;
+    try {
+      const tx = this.db.transaction('lookups', 'readwrite');
+      await Promise.all(entries.map(([lookup, v]) => tx.store.put({ ...v, key: lookup.toLowerCase() })));
+      await tx.done;
+    } catch {
+      /* best effort */
+    }
+  }
   async clear() {
     try {
       await Promise.all([this.db.clear('papers'), this.db.clear('lists'), this.db.clear('lookups')]);
@@ -242,20 +262,27 @@ function stripKey<T extends { key: string }>(row: T): Omit<T, 'key'> {
 }
 
 /** IndexedDB when available, otherwise memory. Never blocks start-up for long (e.g. an upgrade held by an old tab). */
-export async function createCache(timeoutMs = 3000): Promise<CacheAdapter> {
-  if (typeof indexedDB === 'undefined') return new MemoryCache();
+export async function createCache(timeoutMs = 3000, fallback: CacheAdapter = new MemoryCache()): Promise<CacheAdapter> {
+  if (typeof indexedDB === 'undefined') return fallback;
   try {
     const opened = IdbCache.open();
     const timeout = new Promise<null>((res) => setTimeout(() => res(null), timeoutMs));
     const db = await Promise.race([opened, timeout]);
     if (db) return db;
     // Upgrade blocked or slow: start with memory; swap in IndexedDB later if it becomes available.
-    const mem = new MemoryCache();
     void opened.then((idb) => onIdbLate?.(idb)).catch(() => {});
-    return mem;
+    return fallback;
   } catch {
-    return new MemoryCache();
+    return fallback;
   }
+}
+
+/** Never replace a complete list or a larger prefix with a smaller concurrent response. */
+function preferList(previous: CachedList | undefined, next: CachedList): CachedList {
+  if (!previous) return next;
+  if (previous.complete !== next.complete) return previous.complete ? previous : next;
+  if (previous.limit !== next.limit) return previous.limit > next.limit ? previous : next;
+  return previous.fetchedAt > next.fetchedAt ? previous : next;
 }
 
 /** Set by main.tsx to adopt a late-opening IndexedDB cache. */

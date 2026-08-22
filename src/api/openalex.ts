@@ -310,41 +310,49 @@ export class OpenAlexClient implements Provider {
     });
     const select = level === 'full' ? OA_FULL_SELECT : OA_LIST_SELECT;
     const now = this.now();
+    const chunks: Promise<void>[] = [];
     for (const [kind, items] of groups) {
       for (let i = 0; i < items.length; i += OA_LIMITS.filterIds) {
         const chunk = items.slice(i, i + OA_LIMITS.filterIds);
         const filterKey = kind === 'pmcid' ? 'pmcid' : kind;
-        try {
-          const page = await this.request<OAListResponse>(
-            'batch',
-            `oa:batch:${kind}:${chunk.map((c) => c.value).join('|')}:${level}`,
-            '/works',
-            { filter: `${filterKey}:${chunk.map((c) => c.value).join('|')}`, 'per-page': String(chunk.length), select },
-            { priority: PRIORITY.batch, ...options },
-          );
-          const byKey = new Map<string, OAWorkRaw>();
-          for (const r of page.results ?? []) {
-            const k = keyOfRaw(r, kind);
-            if (k) byKey.set(k, r);
-          }
-          for (const c of chunk) {
-            const r = byKey.get(kind === 'doi' ? c.value.toLowerCase() : kind === 'openalex' ? c.value.toUpperCase() : c.value);
-            if (r) results[c.index] = normalizeOpenAlex(r, level, now);
-          }
-        } catch (e) {
-          if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429) {
-            // malformed filter value (odd DOI) → fall back to individual lookups
-            for (const c of chunk) {
-              try {
-                results[c.index] = await this.getPaper(kind === 'openalex' ? c.value : `${kind}:${c.value}`, level, options, 'batch');
-              } catch (e2) {
-                if (!(e2 instanceof NotFoundError)) throw e2;
+        chunks.push(
+          (async () => {
+            try {
+              const page = await this.request<OAListResponse>(
+                'batch',
+                `oa:batch:${kind}:${chunk.map((c) => c.value).join('|')}:${level}`,
+                '/works',
+                { filter: `${filterKey}:${chunk.map((c) => c.value).join('|')}`, 'per-page': String(chunk.length), select },
+                { priority: PRIORITY.batch, ...options },
+              );
+              const byKey = new Map<string, OAWorkRaw>();
+              for (const r of page.results ?? []) {
+                const k = keyOfRaw(r, kind);
+                if (k) byKey.set(k, r);
               }
+              for (const c of chunk) {
+                const r = byKey.get(kind === 'doi' ? c.value.toLowerCase() : kind === 'openalex' ? c.value.toUpperCase() : c.value);
+                if (r) results[c.index] = normalizeOpenAlex(r, level, now);
+              }
+            } catch (e) {
+              if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 429) {
+                // malformed filter value (odd DOI) → fall back to independent lookups
+                await Promise.all(
+                  chunk.map(async (c) => {
+                    try {
+                      results[c.index] = await this.getPaper(kind === 'openalex' ? c.value : `${kind}:${c.value}`, level, options, 'batch');
+                    } catch (e2) {
+                      if (!(e2 instanceof NotFoundError)) throw e2;
+                    }
+                  }),
+                );
+              } else throw e;
             }
-          } else throw e;
-        }
+          })(),
+        );
       }
     }
+    await Promise.all(chunks);
     return results;
   }
 
@@ -364,23 +372,23 @@ export class OpenAlexClient implements Provider {
   }
 
   private async fetchWorksByIds(ids: readonly string[], op: OpKind, options: EnqueueOptions): Promise<Paper[]> {
-    const out: Paper[] = [];
     const now = this.now();
+    const chunks: Promise<Paper[]>[] = [];
     for (let i = 0; i < ids.length; i += OA_LIMITS.filterIds) {
       const chunk = ids.slice(i, i + OA_LIMITS.filterIds);
-      const page = await this.request<OAListResponse>(
-        op,
-        `oa:works:${chunk.join('|')}`,
-        '/works',
-        { filter: `openalex:${chunk.join('|')}`, 'per-page': String(chunk.length), select: OA_LIST_SELECT },
-        { priority: PRIORITY.list, ...options },
+      chunks.push(
+        this.request<OAListResponse>(
+          op,
+          `oa:works:${chunk.join('|')}`,
+          '/works',
+          { filter: `openalex:${chunk.join('|')}`, 'per-page': String(chunk.length), select: OA_LIST_SELECT },
+          { priority: PRIORITY.list, ...options },
+        ).then((page) => (page.results ?? []).map((r) => normalizeOpenAlex(r, 'list', now)).filter((p): p is Paper => !!p)),
       );
-      for (const r of page.results ?? []) {
-        const p = normalizeOpenAlex(r, 'list', now);
-        if (p) out.push(p);
-      }
     }
-    return out;
+    const papers = (await Promise.all(chunks)).flat();
+    const byId = new Map(papers.map((paper) => [paper.sources.openalex!, paper]));
+    return ids.map((id) => byId.get(id)).filter((paper): paper is Paper => !!paper);
   }
 
   private request<T>(op: OpKind, key: string, path: string, params: Record<string, string>, options: EnqueueOptions): Promise<T> {

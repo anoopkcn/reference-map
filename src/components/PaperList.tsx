@@ -21,7 +21,9 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void loadList(ownerId, kind);
+    const controller = new AbortController();
+    void loadList(ownerId, kind, { signal: controller.signal });
+    return () => controller.abort();
   }, [ownerId, kind, loadList]);
 
   const ids = list?.ids ?? EMPTY;

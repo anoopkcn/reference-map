@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { isFresh, paperSatisfies, TTL, type CacheAdapter } from '../api/cache';
+import { isFresh, MemoryCache, paperSatisfies, PROVIDERS, TTL, type CacheAdapter, type CachedList } from '../api/cache';
 import { describeError, isAbort, NotFoundError } from '../api/errors';
 import { mergePaper } from '../api/normalize';
 import { PRIORITY } from '../api/provider';
@@ -48,7 +48,7 @@ export interface AppState {
 
   addSeeds(lookups: readonly Lookup[]): Promise<void>;
   removeSeed(lookup: Lookup): void;
-  loadList(id: PaperId, kind: ListKind, opts?: { force?: boolean }): Promise<ListState>;
+  loadList(id: PaperId, kind: ListKind, opts?: { force?: boolean; limit?: number; signal?: AbortSignal }): Promise<ListState>;
   expandNode(id: PaperId): Promise<void>;
   /** Re-fetch a seed's details and lists from the network (bypassing caches) and rebuild the map. */
   refreshSeed(lookup: Lookup): Promise<void>;
@@ -79,17 +79,27 @@ export interface StoreDeps {
 
 export type AppStore = ReturnType<typeof createAppStore>;
 
+interface SharedListRequest {
+  promise: Promise<ListState>;
+  controller: AbortController;
+  consumers: number;
+  settled: boolean;
+}
+
 const BATCH_THRESHOLD = 3;
 
 export function createAppStore(deps: StoreDeps) {
   const { router, identity } = deps;
   let cache = deps.cache;
+  let cacheReady: Promise<void> = Promise.resolve();
   const now = deps.now ?? (() => Date.now());
   const toastMs = deps.toastMs ?? 3500;
-  const listPromises = new Map<string, Promise<ListState>>();
+  const listPromises = new Map<string, SharedListRequest>();
   const expandPromises = new Map<PaperId, Promise<void>>();
+  const expandControllers = new Map<PaperId, AbortController>();
   let searchCtrl: AbortController | null = null;
   let toastSeq = 0;
+  let settingsTimer: ReturnType<typeof setTimeout> | null = null;
 
   const initialSettings = sanitizeSettings(deps.settings ?? DEFAULT_SETTINGS);
   router.providers.s2?.queue.configure(initialSettings.apiKey ? AUTH_QUEUE : UNAUTH_QUEUE);
@@ -102,7 +112,7 @@ export function createAppStore(deps: StoreDeps) {
       const next = new Map(prev);
       const changed: Paper[] = [];
       for (const p of incoming) {
-        const merged = mergePaper(prev.get(p.paperId), p);
+        const merged = mergePaper(next.get(p.paperId), p);
         next.set(p.paperId, merged);
         changed.push(merged);
       }
@@ -123,10 +133,6 @@ export function createAppStore(deps: StoreDeps) {
     };
 
     const bumpGraph = (): void => set({ graphVersion: get().graph.version });
-
-    const setSeed = (lookup: Lookup, patch: Partial<Seed>): void => {
-      set({ seeds: get().seeds.map((s) => (s.lookup === lookup ? { ...s, ...patch } : s)) });
-    };
 
     /** Make sure every id has a Paper in the store: memory → cache → batch fetch. */
     const ensurePapers = async (ids: readonly PaperId[]): Promise<void> => {
@@ -159,30 +165,7 @@ export function createAppStore(deps: StoreDeps) {
     };
 
     const resolveFromNetwork = async (lookup: Lookup): Promise<Paper> => {
-      const key = lookupToAliasKey(lookup);
-      try {
-        const p = await router.resolve(lookup, 'full', { priority: PRIORITY.seed });
-        if (key) identity.alias(key, p.paperId);
-        return p;
-      } catch (e) {
-        if (e instanceof NotFoundError && key) identity.negative(key);
-        throw e;
-      }
-    };
-
-    /** Called once a seed resolved to a paper: dedupe, add to graph, auto-expand. */
-    const seedReady = (lookup: Lookup, paper: Paper): void => {
-      const state = get();
-      const dup = state.seeds.find((s) => s.lookup !== lookup && s.paperId === paper.paperId);
-      if (dup) {
-        set({ seeds: state.seeds.filter((s) => s.lookup !== lookup) });
-        get().pushToast('Already in the map');
-        return;
-      }
-      setSeed(lookup, { paperId: paper.paperId, status: 'ready', error: undefined });
-      state.graph.addSeed(paper.paperId, paper, get().papers);
-      bumpGraph();
-      if (get().settings.autoExpandSeeds) void get().expandNode(paper.paperId);
+      return router.resolve(lookup, 'list', { priority: PRIORITY.seed });
     };
 
     return {
@@ -211,71 +194,107 @@ export function createAppStore(deps: StoreDeps) {
         if (fresh.length === 0) return;
         set({ seeds: [...get().seeds, ...fresh.map((lookup): Seed => ({ lookup, paperId: null, status: 'resolving' }))], search: null });
 
+        // The shell and resolving cards render immediately, while URL restoration waits for the
+        // persistent cache decision. This prevents a late IndexedDB adoption from duplicating work.
+        await cacheReady;
+
+        type Outcome = { paper?: Paper; error?: unknown; notFound?: boolean };
+        const outcomes = new Map<Lookup, Outcome>();
         const needNetwork: Lookup[] = [];
         await Promise.all(
           fresh.map(async (lookup) => {
             try {
               const r = await resolveFromCache(lookup);
-              if (r === 'notfound') setSeed(lookup, { status: 'error', error: 'Not found on Semantic Scholar or OpenAlex' });
-              else if (r) {
-                upsertPapers([r]);
-                seedReady(lookup, r);
-              } else needNetwork.push(lookup);
+              if (r === 'notfound') outcomes.set(lookup, { notFound: true });
+              else if (r) outcomes.set(lookup, { paper: r });
+              else needNetwork.push(lookup);
             } catch {
               needNetwork.push(lookup);
             }
           }),
         );
-        if (needNetwork.length === 0) return;
-
-        const finishOne = (lookup: Lookup, p: Paper | null, err?: unknown) => {
-          const key = lookupToAliasKey(lookup);
-          if (p) {
-            upsertPapers([p]);
-            if (key) identity.alias(key, p.paperId);
-            seedReady(lookup, p);
-          } else {
-            if (!err && key) identity.negative(key);
-            setSeed(lookup, { status: 'error', error: err ? describeError(err) : 'Not found on Semantic Scholar or OpenAlex' });
-          }
-        };
-
+        let retry = needNetwork;
         if (needNetwork.length >= BATCH_THRESHOLD) {
           try {
-            const results = await router.getBatch(needNetwork, 'full', { priority: PRIORITY.batch });
-            // Misses from the batch get one individual attempt (covers ids a provider's batch endpoint can't take).
-            const retry: Lookup[] = [];
+            const results = await router.getBatch(needNetwork, 'list', { priority: PRIORITY.batch });
+            retry = [];
             needNetwork.forEach((lookup, i) => {
-              if (results[i]) finishOne(lookup, results[i]!);
+              const paper = results[i];
+              if (paper) outcomes.set(lookup, { paper });
               else retry.push(lookup);
             });
-            await Promise.all(
-              retry.map(async (lookup) => {
-                try {
-                  finishOne(lookup, await resolveFromNetwork(lookup));
-                } catch (e) {
-                  finishOne(lookup, null, e instanceof NotFoundError ? undefined : e);
-                }
-              }),
-            );
-            return;
           } catch {
-            /* fall through to individual requests */
+            retry = needNetwork;
           }
         }
         await Promise.all(
-          needNetwork.map(async (lookup) => {
+          retry.map(async (lookup) => {
             try {
-              finishOne(lookup, await resolveFromNetwork(lookup));
+              outcomes.set(lookup, { paper: await resolveFromNetwork(lookup) });
             } catch (e) {
-              finishOne(lookup, null, e instanceof NotFoundError ? undefined : e);
+              outcomes.set(lookup, e instanceof NotFoundError ? { notFound: true } : { error: e });
             }
           }),
         );
+
+        const state = get();
+        const nextPapers = new Map(state.papers);
+        const changed: Paper[] = [];
+        for (const { paper } of outcomes.values()) {
+          if (!paper) continue;
+          const merged = mergePaper(nextPapers.get(paper.paperId), paper);
+          nextPapers.set(paper.paperId, merged);
+          changed.push(merged);
+        }
+
+        const seenIds = new Set(
+          state.seeds.filter((seed) => !outcomes.has(seed.lookup)).map((seed) => seed.paperId).filter((id): id is PaperId => !!id),
+        );
+        const graphEntries: [PaperId, Paper][] = [];
+        const aliases: [string, PaperId][] = [];
+        const negatives: string[] = [];
+        let duplicate = false;
+        const seeds: Seed[] = [];
+        for (const seed of state.seeds) {
+          const outcome = outcomes.get(seed.lookup);
+          if (!outcome) {
+            seeds.push(seed);
+            continue;
+          }
+          const key = lookupToAliasKey(seed.lookup);
+          if (outcome.paper) {
+            const id = outcome.paper.paperId;
+            if (key) aliases.push([key, id]);
+            if (seenIds.has(id)) {
+              duplicate = true;
+              continue;
+            }
+            seenIds.add(id);
+            seeds.push({ lookup: seed.lookup, paperId: id, status: 'ready', error: undefined });
+            graphEntries.push([id, nextPapers.get(id)!]);
+          } else {
+            if (outcome.notFound && key) negatives.push(key);
+            seeds.push({
+              lookup: seed.lookup,
+              paperId: null,
+              status: 'error',
+              error: outcome.error ? describeError(outcome.error) : 'Not found on Semantic Scholar or OpenAlex',
+            });
+          }
+        }
+        identity.aliasMany(aliases);
+        identity.negativeMany(negatives);
+        state.graph.addSeeds(graphEntries, nextPapers);
+        set({ papers: nextPapers, seeds, graphVersion: state.graph.version });
+        void cache.putPapers(changed);
+        if (duplicate) get().pushToast('Already in the map');
+        if (get().settings.autoExpandSeeds) for (const [id] of graphEntries) void get().expandNode(id);
       },
 
       removeSeed(lookup) {
         const state = get();
+        const removedId = state.seeds.find((seed) => seed.lookup === lookup)?.paperId;
+        if (removedId) expandControllers.get(removedId)?.abort();
         const seeds = state.seeds.filter((s) => s.lookup !== lookup);
         set({ seeds });
         const seedIds = seeds.map((s) => s.paperId).filter((id): id is PaperId => !!id);
@@ -285,48 +304,80 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       loadList(id, kind, opts = {}) {
-        const key = `${id}:${kind}`;
+        const limit = Math.max(1, Math.floor(opts.limit ?? get().settings.listLimit));
+        const key = `${id}:${kind}:${limit}:${opts.force ? 'force' : 'cached'}`;
         const existing = get().lists.get(id)?.[kind];
-        if (!opts.force && existing && existing.status === 'ready') return Promise.resolve(existing);
+        if (!opts.force && listStateSatisfies(existing, limit)) return Promise.resolve(existing);
         const inflight = listPromises.get(key);
-        if (inflight) return inflight;
+        if (inflight) return consumeListRequest(inflight, opts.signal, () => get().lists.get(id)?.[kind] ?? idleListState());
+
+        const controller = new AbortController();
+        const request: SharedListRequest = { promise: Promise.resolve(idleListState()), controller, consumers: 0, settled: false };
 
         const run = async (): Promise<ListState> => {
-          setList(id, kind, { ids: existing?.ids ?? [], status: 'loading', total: existing?.total ?? null, provider: existing?.provider });
-          const limit = get().settings.listLimit;
+          setList(id, kind, {
+            ids: existing?.ids ?? [],
+            status: 'loading',
+            total: existing?.total ?? null,
+            provider: existing?.provider,
+            loadedLimit: existing?.loadedLimit ?? 0,
+            complete: existing?.complete ?? false,
+          });
           try {
             const paper = get().papers.get(id);
             if (!paper) throw new Error('Paper not loaded');
-            const cached = opts.force ? undefined : await cache.getList(id, kind);
-            if (cached && isFresh(cached.fetchedAt, TTL.list, now()) && (cached.complete || cached.limit >= limit)) {
+            const cached = opts.force ? undefined : await bestCachedList(cache, id, kind, limit, now());
+            if (cached) {
               await ensurePapers(cached.ids);
               const ids = cached.ids.filter((x) => get().papers.has(x));
-              const st: ListState = { ids, status: 'ready', total: cached.total ?? listTotal(get().papers.get(id), kind, ids.length), provider: cached.provider };
+              const st: ListState = {
+                ids,
+                status: 'ready',
+                total: cached.total ?? listTotal(get().papers.get(id), kind, ids.length),
+                provider: cached.provider,
+                loadedLimit: cached.limit,
+                complete: cached.complete,
+              };
+              return commitListState(get, setList, id, kind, st);
+            }
+            const res = await router.getList(paper, kind, limit, { priority: PRIORITY.list, signal: controller.signal });
+            upsertPapers(res.papers);
+            void cache.putList(id, kind, { ids: res.ids, limit, complete: !res.hasMore, fetchedAt: now(), provider: res.provider, total: res.total });
+            const st: ListState = {
+              ids: res.ids,
+              status: 'ready',
+              total: res.total ?? listTotal(get().papers.get(id), kind, res.ids.length),
+              provider: res.provider,
+              loadedLimit: limit,
+              complete: !res.hasMore,
+            };
+            return commitListState(get, setList, id, kind, st);
+          } catch (e) {
+            const current = get().lists.get(id)?.[kind];
+            if (current?.status === 'ready') return current;
+            if (isAbort(e)) {
+              const st = existing?.status === 'ready' ? existing : idleListState(existing);
               setList(id, kind, st);
               return st;
             }
-            const res = await router.getList(paper, kind, limit, { priority: PRIORITY.list });
-            upsertPapers(res.papers);
-            void cache.putList(id, kind, { ids: res.ids, limit, complete: !res.hasMore, fetchedAt: now(), provider: res.provider, total: res.total });
-            const st: ListState = { ids: res.ids, status: 'ready', total: res.total ?? listTotal(get().papers.get(id), kind, res.ids.length), provider: res.provider };
-            setList(id, kind, st);
-            return st;
-          } catch (e) {
-            const st: ListState = { ids: [], status: 'error', total: null, error: describeError(e) };
+            const st: ListState = { ids: [], status: 'error', total: null, error: describeError(e), loadedLimit: 0, complete: false };
             setList(id, kind, st);
             return st;
           } finally {
-            listPromises.delete(key);
+            request.settled = true;
+            if (listPromises.get(key) === request) listPromises.delete(key);
           }
         };
-        const p = run();
-        listPromises.set(key, p);
-        return p;
+        request.promise = run();
+        listPromises.set(key, request);
+        return consumeListRequest(request, opts.signal, () => get().lists.get(id)?.[kind] ?? idleListState());
       },
 
       expandNode(id) {
         const running = expandPromises.get(id);
         if (running) return running;
+        const controller = new AbortController();
+        expandControllers.set(id, controller);
         const run = async () => {
           const state = get();
           const paper = state.papers.get(id);
@@ -341,9 +392,13 @@ export function createAppStore(deps: StoreDeps) {
           }
           set({ expanding: new Set([...get().expanding, id]) });
           try {
-            const [refs, cites] = await Promise.all([get().loadList(id, 'refs'), get().loadList(id, 'cites')]);
+            const limit = get().settings.graphExpandLimit;
+            const [refs, cites] = await Promise.all([
+              get().loadList(id, 'refs', { limit, signal: controller.signal }),
+              get().loadList(id, 'cites', { limit, signal: controller.signal }),
+            ]);
             const s = get();
-            if (!s.graph.hasNode(id)) return; // removed meanwhile
+            if (controller.signal.aborted || !s.graph.hasNode(id)) return; // removed meanwhile
             s.graph.mergeNeighborhood(id, refs.status === 'ready' ? refs.ids : null, cites.status === 'ready' ? cites.ids : null, s.papers, s.settings.graphExpandLimit);
             bumpGraph();
             if (refs.status === 'error' || cites.status === 'error') {
@@ -354,6 +409,7 @@ export function createAppStore(deps: StoreDeps) {
             next.delete(id);
             set({ expanding: next });
             expandPromises.delete(id);
+            if (expandControllers.get(id) === controller) expandControllers.delete(id);
           }
         };
         const p = run();
@@ -455,7 +511,11 @@ export function createAppStore(deps: StoreDeps) {
         const prev = get().settings;
         const next = sanitizeSettings({ ...prev, ...patch });
         set({ settings: next });
-        saveSettings(next);
+        if (settingsTimer) clearTimeout(settingsTimer);
+        settingsTimer = setTimeout(() => {
+          settingsTimer = null;
+          saveSettings(get().settings);
+        }, 150);
         if (next.apiKey !== prev.apiKey) router.providers.s2?.queue.configure(next.apiKey ? AUTH_QUEUE : UNAUTH_QUEUE);
       },
 
@@ -481,13 +541,108 @@ export function createAppStore(deps: StoreDeps) {
     if (JSON.stringify(cur) !== JSON.stringify(s)) store.setState({ providers: s });
   });
 
-  /** Swap the cache adapter (used once IndexedDB has opened). */
-  const setCache = (c: CacheAdapter) => {
-    cache = c;
-    identity.setCache(c);
+  /** Adopt a persistent cache without delaying React mount or losing memory writes. */
+  const prepareCache = (pending: Promise<CacheAdapter>): Promise<void> => {
+    cacheReady = cacheReady.then(async () => {
+      const next = await pending;
+      if (next === cache) return;
+      const previous = cache;
+      // Route new writes to the destination before copying the synchronous memory snapshot.
+      cache = next;
+      identity.setCache(next);
+      if (previous instanceof MemoryCache) await migrateMemoryCache(previous, next);
+    });
+    return cacheReady;
   };
 
-  return Object.assign(store, { setCache });
+  return Object.assign(store, { prepareCache });
+}
+
+function listStateSatisfies(state: ListState | undefined, limit: number): state is ListState {
+  return !!state && state.status === 'ready' && (state.complete || state.loadedLimit >= limit);
+}
+
+function idleListState(previous?: ListState): ListState {
+  return {
+    ids: previous?.ids ?? [],
+    status: 'idle',
+    total: previous?.total ?? null,
+    provider: previous?.provider,
+    loadedLimit: previous?.loadedLimit ?? 0,
+    complete: previous?.complete ?? false,
+  };
+}
+
+function consumeListRequest(request: SharedListRequest, signal: AbortSignal | undefined, fallback: () => ListState): Promise<ListState> {
+  request.consumers++;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    request.consumers--;
+    if (!request.settled && request.consumers === 0) request.controller.abort();
+  };
+  if (!signal) return request.promise.finally(release);
+  if (signal.aborted) {
+    release();
+    return Promise.resolve(fallback());
+  }
+  return new Promise<ListState>((resolve, reject) => {
+    const onAbort = () => {
+      release();
+      resolve(fallback());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    request.promise.then(
+      (state) => {
+        signal.removeEventListener('abort', onAbort);
+        release();
+        resolve(state);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        release();
+        reject(error);
+      },
+    );
+  });
+}
+
+function preferListState(previous: ListState | undefined, next: ListState): ListState {
+  if (!previous || previous.status !== 'ready') return next;
+  if (previous.complete !== next.complete) return previous.complete ? previous : next;
+  if (previous.loadedLimit !== next.loadedLimit) return previous.loadedLimit > next.loadedLimit ? previous : next;
+  return next;
+}
+
+function commitListState(
+  get: () => AppState,
+  setList: (id: PaperId, kind: ListKind, state: ListState) => void,
+  id: PaperId,
+  kind: ListKind,
+  incoming: ListState,
+): ListState {
+  const preferred = preferListState(get().lists.get(id)?.[kind], incoming);
+  setList(id, kind, preferred);
+  return preferred;
+}
+
+async function bestCachedList(cache: CacheAdapter, id: PaperId, kind: ListKind, limit: number, now: number): Promise<CachedList | undefined> {
+  const candidates = await Promise.all(PROVIDERS.map((provider) => cache.getList(id, kind, provider)));
+  return candidates
+    .filter((list): list is CachedList => !!list && isFresh(list.fetchedAt, TTL.list, now) && (list.complete || list.limit >= limit))
+    .sort((a, b) => Number(b.complete) - Number(a.complete) || b.limit - a.limit || b.fetchedAt - a.fetchedAt)[0];
+}
+
+async function migrateMemoryCache(source: MemoryCache, target: CacheAdapter): Promise<void> {
+  await target.putPapers([...source.papers.values()]);
+  const listWrites: Promise<void>[] = [];
+  for (const [key, list] of source.lists) {
+    const match = /^(.*):(refs|cites):(s2|openalex)$/.exec(key);
+    if (match) listWrites.push(target.putList(match[1]!, match[2]! as ListKind, list));
+  }
+  await Promise.all(listWrites);
+  await target.putLookups([...source.lookups]);
 }
 
 function listTotal(p: Paper | undefined, kind: ListKind, fallback: number): number {
