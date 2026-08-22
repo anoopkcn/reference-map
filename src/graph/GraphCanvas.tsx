@@ -98,6 +98,8 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     themeRef.current = readTheme(container);
     const frame = frameRef.current;
     let hadNodes = frame.n > 0;
+    let seedFitPending = false;
+    let seedFitRaf = 0;
 
     const applyTransform = (t: ViewTransform, animate: boolean) => {
       const z = zoomRef.current;
@@ -152,6 +154,24 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     );
     bridgeRef.current = bridge;
 
+    // Seed membership changes are navigation-level graph changes: frame the new map immediately.
+    // Resetting userInteracted also lets the settled layout receive the existing final auto-fit.
+    let seedKey = readySeedKey(appStore.getState().seeds);
+    const unsubscribeSeeds = appStore.subscribe((state) => {
+      const nextKey = readySeedKey(state.seeds);
+      if (nextKey === seedKey) return;
+      seedKey = nextKey;
+      userInteracted.current = false;
+      seedFitPending = true;
+      cancelAnimationFrame(seedFitRaf);
+      seedFitRaf = requestAnimationFrame(() => {
+        seedFitRaf = 0;
+        if (!activeRef.current) return;
+        seedFitPending = false;
+        fit(true);
+      });
+    });
+
     // sizing
     const resize = () => {
       const rect = container.getBoundingClientRect();
@@ -196,7 +216,10 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       bridge.setActive(active);
       if (active) {
         resize();
-        markDirty();
+        if (seedFitPending) {
+          seedFitPending = false;
+          fit(true);
+        } else markDirty();
       } else {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = 0;
@@ -372,6 +395,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
 
     return () => {
       controlsRef.current = null;
+      unsubscribeSeeds();
       ro.disconnect();
       io.disconnect();
       document.removeEventListener('visibilitychange', updateActive);
@@ -387,6 +411,8 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       rafRef.current = 0;
       cancelAnimationFrame(animRef.current);
       animRef.current = 0;
+      cancelAnimationFrame(seedFitRaf);
+      seedFitRaf = 0;
       cancelAnimationFrame(hoverRaf);
       hoverRaf = 0;
       bridge.destroy();
@@ -404,4 +430,8 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       <GraphTooltip ref={tipRef} id={tipId} />
     </div>
   );
+}
+
+function readySeedKey(seeds: readonly { paperId: string | null; status: string }[]): string {
+  return seeds.filter((seed) => seed.status === 'ready' && seed.paperId).map((seed) => seed.paperId).join('\0');
 }
