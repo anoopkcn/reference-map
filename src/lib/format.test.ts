@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Paper } from '../types';
-import { authorUrl, authorsLine, formatCount, nodeLabel, paperUrl, plainCitation, pubTypeLabel, truncate, venueLine } from './format';
+import { authorUrl, authorsLine, formatCount, nodeLabel, paperUrl, paperUrlLabel, plainCitation, pubTypeLabel, truncate, venueLine } from './format';
 
 const paper = (over: Partial<Paper> = {}): Paper => ({
   paperId: 's2:abc',
@@ -52,12 +52,20 @@ describe('format', () => {
       'Ashish Vaswani, Noam Shazeer. Attention Is All You Need. https://www.semanticscholar.org/paper/abc',
     );
   });
-  it('paperUrl / authorUrl prefer DOI, then provider pages', () => {
-    expect(paperUrl(paper())).toBe('https://doi.org/10.1/x');
+  it('paperUrl prefers provider pages, then DOI/arXiv fallbacks', () => {
+    expect(paperUrl(paper())).toBe('https://www.semanticscholar.org/paper/abc');
+    expect(paperUrlLabel(paper())).toBe('Open on Semantic Scholar');
     expect(paperUrl(paper({ externalIds: {} }))).toBe('https://www.semanticscholar.org/paper/abc');
-    expect(paperUrl(paper({ externalIds: {}, sources: { openalex: 'W1' } }))).toBe('https://openalex.org/W1');
+    expect(paperUrl(paper({ sources: { openalex: 'W1' } }))).toBe('https://openalex.org/W1');
+    expect(paperUrlLabel(paper({ sources: { openalex: 'W1' } }))).toBe('Open on OpenAlex');
+    expect(paperUrl(paper({ sources: {}, externalIds: { DOI: '10.1/x', ArXiv: '1706.03762' } }))).toBe('https://doi.org/10.1/x');
+    expect(paperUrlLabel(paper({ sources: {}, externalIds: { DOI: '10.1/x' } }))).toBe('Open via DOI');
     expect(paperUrl(paper({ externalIds: { ArXiv: '1706.03762' }, sources: {} }))).toBe('https://arxiv.org/abs/1706.03762');
+    expect(paperUrlLabel(paper({ externalIds: { ArXiv: '1706.03762' }, sources: {} }))).toBe('Open on arXiv');
     expect(paperUrl(paper({ externalIds: {}, sources: {} }))).toBeNull();
+    expect(paperUrlLabel(paper({ externalIds: {}, sources: {} }))).toBe('');
+  });
+  it('authorUrl selects the author provider', () => {
     expect(authorUrl({ authorId: '1', name: 'x' })).toBe('https://www.semanticscholar.org/author/1');
     expect(authorUrl({ authorId: 'A1', name: 'x', provider: 'openalex' })).toBe('https://openalex.org/A1');
     expect(authorUrl({ authorId: null, name: 'x' })).toBeNull();

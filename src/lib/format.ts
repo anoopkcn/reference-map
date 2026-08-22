@@ -22,21 +22,27 @@ export function pdfUrl(p: Pick<Paper, 'isOpenAccess' | 'openAccessPdf'>): string
   return p.openAccessPdf?.url || null;
 }
 
-/** Best landing page for a paper: DOI › Semantic Scholar › OpenAlex › arXiv. */
+/**
+ * Best page for opening a paper from the UI.
+ *
+ * Prefer the provider record that supplied the displayed metadata. DOI targets can be
+ * stale or broken at the publisher even while the provider record remains available.
+ * The DOI is still exposed separately and remains preferred in copied citations.
+ */
 export function paperUrl(p: Pick<Paper, 'externalIds' | 'sources'>): string | null {
   return (
-    doiUrl(p) ??
     (p.sources.s2 ? s2PaperUrl(p.sources.s2) : null) ??
     (p.sources.openalex ? `${OPENALEX_WEB}/${p.sources.openalex}` : null) ??
+    doiUrl(p) ??
     arxivUrl(p)
   );
 }
 
 /** Human label for where paperUrl points. */
 export function paperUrlLabel(p: Pick<Paper, 'externalIds' | 'sources'>): string {
-  if (p.externalIds.DOI) return 'Open via DOI';
   if (p.sources.s2) return 'Open on Semantic Scholar';
   if (p.sources.openalex) return 'Open on OpenAlex';
+  if (p.externalIds.DOI) return 'Open via DOI';
   if (p.externalIds.ArXiv) return 'Open on arXiv';
   return '';
 }
