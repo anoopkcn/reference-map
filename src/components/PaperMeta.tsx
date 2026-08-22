@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
-import { authorsLine, formatCount, pubTypeLabel, s2AuthorUrl, s2PaperUrl, surname, venueLine } from '../lib/format';
-import type { Paper } from '../types';
+import { authorUrl, authorsLine, formatCount, paperUrl, paperUrlLabel, pubTypeLabel, surname, venueLine } from '../lib/format';
+import { PROVIDER_LABEL, PROVIDER_SHORT, type Paper, type PaperSources, type ProviderId } from '../types';
 import { Icon } from './icons';
 
 const MAX_AUTHORS = 6;
@@ -23,12 +23,17 @@ export const PaperMeta = memo(function PaperMeta({ paper, variant }: { paper: Pa
     );
   }
   const venue = venueLine(paper);
+  const url = paperUrl(paper);
   return (
     <div className="meta full">
       <h3 className="title">
-        <a href={s2PaperUrl(paper.paperId)} target="_blank" rel="noopener noreferrer" title="Open on Semantic Scholar">
-          {paper.title}
-        </a>
+        {url ? (
+          <a href={url} target="_blank" rel="noopener noreferrer" title={paperUrlLabel(paper)}>
+            {paper.title}
+          </a>
+        ) : (
+          <span>{paper.title}</span>
+        )}
       </h3>
       <Authors paper={paper} />
       <div className="metaline">
@@ -37,10 +42,24 @@ export const PaperMeta = memo(function PaperMeta({ paper, variant }: { paper: Pa
         {paper.publicationTypes.map((t) => (
           <span key={t} className="chip">{pubTypeLabel(t)}</span>
         ))}
+        <SourceChips sources={paper.sources} />
       </div>
     </div>
   );
 });
+
+/** Tiny provenance chips: which data sources know this paper. */
+export function SourceChips({ sources }: { sources: PaperSources }) {
+  const ids = (Object.keys(sources) as ProviderId[]).filter((k) => sources[k]);
+  if (ids.length === 0) return null;
+  return (
+    <span className="source-chips">
+      {ids.map((id) => (
+        <span key={id} className={`source-chip ${id}`} title={`Data from ${PROVIDER_LABEL[id]}`}>{PROVIDER_SHORT[id]}</span>
+      ))}
+    </span>
+  );
+}
 
 function Authors({ paper }: { paper: Paper }) {
   const [all, setAll] = useState(false);
@@ -49,16 +68,19 @@ function Authors({ paper }: { paper: Paper }) {
   const extra = paper.authors.length - shown.length;
   return (
     <div className="authors" title={authorsLine(paper.authors)}>
-      {shown.map((a, i) => (
-        <span key={`${a.authorId ?? a.name}-${i}`}>
-          {a.authorId ? (
-            <a href={s2AuthorUrl(a.authorId)} target="_blank" rel="noopener noreferrer">{a.name}</a>
-          ) : (
-            <span>{a.name}</span>
-          )}
-          {i < shown.length - 1 ? ', ' : ''}
-        </span>
-      ))}
+      {shown.map((a, i) => {
+        const href = authorUrl(a);
+        return (
+          <span key={`${a.authorId ?? a.name}-${i}`}>
+            {href ? (
+              <a href={href} target="_blank" rel="noopener noreferrer">{a.name}</a>
+            ) : (
+              <span>{a.name}</span>
+            )}
+            {i < shown.length - 1 ? ', ' : ''}
+          </span>
+        );
+      })}
       {extra > 0 && (
         <button className="linkish" onClick={() => setAll(true)}>, +{extra} more</button>
       )}
@@ -75,8 +97,8 @@ export function Counts({ paper, compact = false }: { paper: Paper; compact?: boo
     <div className={`counts ${compact ? 'compact' : ''}`}>
       <span title="References (papers it cites)"><Icon name="list" size={12} /> {formatCount(paper.referenceCount)}</span>
       <span title="Citations (papers citing it)"><Icon name="quote" size={12} /> {formatCount(paper.citationCount)}</span>
-      {paper.influentialCitationCount > 0 && (
-        <span title="Influential citations"><Icon name="target" size={12} /> {formatCount(paper.influentialCitationCount)}</span>
+      {paper.influentialCitationCount !== null && paper.influentialCitationCount > 0 && (
+        <span title="Influential citations (Semantic Scholar)"><Icon name="target" size={12} /> {formatCount(paper.influentialCitationCount)}</span>
       )}
     </div>
   );

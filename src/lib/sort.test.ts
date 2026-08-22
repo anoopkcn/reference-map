@@ -4,6 +4,7 @@ import { filterIds, sortIds } from './sort';
 
 const mk = (id: string, over: Partial<Paper>): Paper => ({
   paperId: id,
+  sources: {},
   title: id,
   year: null,
   authors: [],

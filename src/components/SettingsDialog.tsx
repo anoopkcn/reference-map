@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '../store';
 import { S2_LIMITS } from '../api/fields';
-import type { LabelMode, Theme } from '../types';
+import type { LabelMode, SourceMode, Theme } from '../types';
 import { Icon } from './icons';
 
 export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -11,18 +11,23 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const clearCache = useAppStore((s) => s.clearCache);
   const [key, setKey] = useState(settings.apiKey);
   const [showKey, setShowKey] = useState(false);
+  const [email, setEmail] = useState(settings.openalexEmail);
 
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
     if (open && !d.open) {
       setKey(settings.apiKey);
+      setEmail(settings.openalexEmail);
       d.showModal();
     } else if (!open && d.open) d.close();
-  }, [open, settings.apiKey]);
+  }, [open, settings.apiKey, settings.openalexEmail]);
 
   const commitKey = () => {
     if (key.trim() !== settings.apiKey) update({ apiKey: key.trim() });
+  };
+  const commitEmail = () => {
+    if (email.trim() !== settings.openalexEmail) update({ openalexEmail: email.trim() });
   };
 
   return (
@@ -31,6 +36,21 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
         <div className="dialog-head">
           <h2>Settings</h2>
           <button className="btn ghost icon" onClick={onClose} aria-label="Close"><Icon name="close" /></button>
+        </div>
+
+        <div className="field">
+          <span>Data sources</span>
+          <div className="segmented">
+            {(['auto', 's2', 'openalex'] as SourceMode[]).map((m) => (
+              <button key={m} className={settings.sourceMode === m ? 'active' : ''} onClick={() => update({ sourceMode: m })}>
+                {m === 'auto' ? 'Automatic' : m === 's2' ? 'Semantic Scholar only' : 'OpenAlex only'}
+              </button>
+            ))}
+          </div>
+          <span className="faint small">
+            Automatic uses whichever source is healthy and fastest for each request and falls back to the other. Note: arXiv, ACL, CorpusId and URL
+            lookups are only supported by Semantic Scholar.
+          </span>
         </div>
 
         <label className="field">
@@ -43,6 +63,12 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             Stored only in this browser. Without a key, requests are spaced ~1/s and may be throttled. Get one at{' '}
             <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noopener noreferrer">semanticscholar.org</a>.
           </span>
+        </label>
+
+        <label className="field">
+          <span>OpenAlex contact e-mail <span className="faint">(optional)</span></span>
+          <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={commitEmail} placeholder="you@example.org — joins OpenAlex's faster “polite pool”" autoComplete="off" spellCheck={false} />
+          <span className="faint small">Sent only to OpenAlex as the <code>mailto</code> parameter. Leave empty to use the anonymous pool.</span>
         </label>
 
         <label className="field">
@@ -88,7 +114,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           <span>Local cache</span>
           <div className="row">
             <button className="btn" onClick={() => void clearCache()}><Icon name="trash" /> Clear cached papers</button>
-            <span className="faint small">Papers and lists are cached in your browser for a few days to avoid repeat downloads.</span>
+            <span className="faint small">Papers, lists and id aliases are cached in your browser for a few days to avoid repeat downloads.</span>
           </div>
         </div>
       </div>

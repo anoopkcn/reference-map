@@ -7,6 +7,7 @@ import { GraphPanel } from './graph/GraphPanel';
 import { useTheme } from './hooks/useTheme';
 import { useUrlSync } from './hooks/useUrlSync';
 import { useAppStore } from './store';
+import { PROVIDER_LABEL, PROVIDER_SHORT } from './types';
 
 export function App() {
   const resolved = useTheme();
@@ -32,7 +33,7 @@ export function App() {
             <div className="brand"><Logo /> Reference Map</div>
             <Tabs tab={tab} onTab={setTab} />
             <div className="header-spacer" />
-            <QueuePill />
+            <ProviderPill />
             <button className="btn ghost icon" onClick={() => update({ theme: resolved === 'dark' ? 'light' : 'dark' })} title={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} theme`} aria-label="Toggle theme">
               <Icon name={resolved === 'dark' ? 'sun' : 'moon'} />
             </button>
@@ -60,26 +61,42 @@ export function Tabs({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   );
 }
 
-/** Shows queue depth and rate-limit pauses. */
-function QueuePill() {
-  const q = useAppStore((s) => s.queue);
+/** Shows queue depth, rate-limit pauses and degraded sources. */
+function ProviderPill() {
+  const providers = useAppStore((s) => s.providers);
   const [, tick] = useState(0);
-  const paused = q.pausedUntil !== null && q.pausedUntil > Date.now();
+  const list = Object.values(providers);
+  const now = Date.now();
+  const paused = list.filter((p) => p.pausedUntil !== null && p.pausedUntil > now);
   useEffect(() => {
-    if (!paused) return;
+    if (paused.length === 0) return;
     const t = setInterval(() => tick((n) => n + 1), 500);
     return () => clearInterval(t);
-  }, [paused, q.pausedUntil]);
-  const busy = q.pending + q.active;
-  if (!busy && !paused) return null;
-  const secs = paused ? Math.max(0, Math.ceil((q.pausedUntil! - Date.now()) / 1000)) : 0;
-  return (
-    <div
-      className={`pill ${paused ? 'warn' : ''}`}
-      title={paused ? `Semantic Scholar asked us to slow down — retrying in ${secs}s` : `${busy} request${busy > 1 ? 's' : ''} waiting for the rate limiter`}
-    >
-      {paused ? <Icon name="alert" size={13} /> : <span className="spinner" />}
-      {paused ? `Limited · ${secs}s` : `${busy} queued`}
-    </div>
-  );
+  }, [paused.length]);
+  const busy = list.reduce((n, p) => n + p.pending + p.active, 0);
+  const degraded = list.filter((p) => p.recentErrors > 0);
+  if (paused.length) {
+    const p = paused[0]!;
+    const secs = Math.max(0, Math.ceil((p.pausedUntil! - now) / 1000));
+    return (
+      <div className="pill warn" title={`${PROVIDER_LABEL[p.id]} asked us to slow down — retrying in ${secs}s${list.length > 1 ? '; other sources keep working' : ''}`}>
+        <Icon name="alert" size={13} /> {PROVIDER_SHORT[p.id]} limited · {secs}s
+      </div>
+    );
+  }
+  if (busy) {
+    return (
+      <div className="pill" title={`${busy} request${busy > 1 ? 's' : ''} in flight or waiting for the rate limiter`}>
+        <span className="spinner" /> {busy} queued
+      </div>
+    );
+  }
+  if (degraded.length) {
+    return (
+      <div className="pill warn" title={degraded.map((p) => `${PROVIDER_LABEL[p.id]}: ${p.lastError ?? 'recent errors'}`).join('\n')}>
+        <Icon name="alert" size={13} /> {degraded.map((p) => PROVIDER_SHORT[p.id]).join(' · ')} degraded
+      </div>
+    );
+  }
+  return null;
 }

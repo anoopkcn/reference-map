@@ -1,16 +1,21 @@
 import { MemoryCache } from '../api/cache';
+import { OA_QUEUE, OpenAlexClient } from '../api/openalex';
 import { RequestQueue } from '../api/queue';
+import { Router } from '../api/router';
 import { S2Client } from '../api/s2';
+import { Identity } from '../lib/identity';
 import { loadSettings } from './settings';
 import { createAppStore } from './store';
 
-export const queue = new RequestQueue();
-export const appStore = createAppStore({
-  queue,
-  client: new S2Client({ queue, getApiKey: () => appStore.getState().settings.apiKey }),
-  cache: new MemoryCache(),
-  settings: loadSettings(),
-});
+const memCache = new MemoryCache();
+export const s2Queue = new RequestQueue();
+export const oaQueue = new RequestQueue(OA_QUEUE);
+export const identity = new Identity(memCache);
+export const s2 = new S2Client({ queue: s2Queue, getApiKey: () => appStore.getState().settings.apiKey });
+export const openalex = new OpenAlexClient({ queue: oaQueue, getMailto: () => appStore.getState().settings.openalexEmail });
+export const router = new Router({ providers: [s2, openalex], identity, getMode: () => appStore.getState().settings.sourceMode });
+
+export const appStore = createAppStore({ router, identity, cache: memCache, settings: loadSettings() });
 
 /** Apply the theme to <html data-theme> synchronously whenever it changes (before React effects read CSS variables). */
 function applyTheme(theme: string): void {

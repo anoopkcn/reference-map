@@ -57,6 +57,17 @@ describe('normalizeLookup', () => {
     ['https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0123456', 'DOI:10.1371/journal.pone.0123456'],
     ['URL:https://arxiv.org/abs/2003.05991', 'ARXIV:2003.05991'],
     ['URL: https://www.biorxiv.org/about', 'URL:https://www.biorxiv.org/about'],
+    // provider-native / canonical ids
+    [`s2:${SHA}`, `s2:${SHA}`],
+    [`S2:${SHA.toUpperCase()}`, `s2:${SHA}`],
+    ['oa:W2801930304', 'oa:W2801930304'],
+    ['openalex:w2801930304', 'oa:W2801930304'],
+    ['W2801930304', 'oa:W2801930304'],
+    ['https://openalex.org/W2801930304', 'oa:W2801930304'],
+    ['https://openalex.org/works/W2801930304', 'oa:W2801930304'],
+    ['https://api.openalex.org/works/W2801930304?select=id', 'oa:W2801930304'],
+    ['doi:10.18653/v1/n18-3011', 'DOI:10.18653/v1/n18-3011'],
+    ['arxiv:1706.03762', 'ARXIV:1706.03762'],
     // prefixed ids
     ['CorpusId:215416146', 'CorpusId:215416146'],
     ['corpusid: 215416146', 'CorpusId:215416146'],
@@ -130,6 +141,9 @@ describe('displayLookup', () => {
     expect(displayLookup('ARXIV:1706.03762')).toBe('arXiv:1706.03762');
     expect(displayLookup('URL:https://www.biorxiv.org/about')).toBe('biorxiv.org/about');
     expect(displayLookup(SHA)).toBe(SHA.slice(0, 10) + '…');
+    expect(displayLookup(`s2:${SHA}`)).toBe(SHA.slice(0, 10) + '…');
+    expect(displayLookup('oa:W123')).toBe('W123');
+    expect(displayLookup('doi:10.1/x')).toBe('10.1/x');
     expect(displayLookup('PMID:1')).toBe('PMID:1');
   });
 });

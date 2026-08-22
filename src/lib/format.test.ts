@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Paper } from '../types';
-import { authorsLine, formatCount, nodeLabel, plainCitation, pubTypeLabel, truncate, venueLine } from './format';
+import { authorUrl, authorsLine, formatCount, nodeLabel, paperUrl, plainCitation, pubTypeLabel, truncate, venueLine } from './format';
 
 const paper = (over: Partial<Paper> = {}): Paper => ({
-  paperId: 'abc',
+  paperId: 's2:abc',
+  sources: { s2: 'abc' },
   title: 'Attention Is All You Need',
   year: 2017,
   authors: [
@@ -41,6 +42,7 @@ describe('format', () => {
     expect(venueLine(paper({ journal: { name: 'Nature', volume: '1', pages: '2-3' } }))).toBe('Nature, 1, 2-3');
     expect(venueLine(paper({ journal: { name: '', pages: '2-3' } }))).toBe('NeurIPS, 2-3');
     expect(venueLine(paper({ journal: null, venue: '' }))).toBe('');
+    expect(venueLine(paper({ journal: { pages: '1-2' }, venue: '' }))).toBe('');
   });
   it('plainCitation', () => {
     expect(plainCitation(paper())).toBe(
@@ -49,6 +51,16 @@ describe('format', () => {
     expect(plainCitation(paper({ externalIds: {}, venue: '', year: null }))).toBe(
       'Ashish Vaswani, Noam Shazeer. Attention Is All You Need. https://www.semanticscholar.org/paper/abc',
     );
+  });
+  it('paperUrl / authorUrl prefer DOI, then provider pages', () => {
+    expect(paperUrl(paper())).toBe('https://doi.org/10.1/x');
+    expect(paperUrl(paper({ externalIds: {} }))).toBe('https://www.semanticscholar.org/paper/abc');
+    expect(paperUrl(paper({ externalIds: {}, sources: { openalex: 'W1' } }))).toBe('https://openalex.org/W1');
+    expect(paperUrl(paper({ externalIds: { ArXiv: '1706.03762' }, sources: {} }))).toBe('https://arxiv.org/abs/1706.03762');
+    expect(paperUrl(paper({ externalIds: {}, sources: {} }))).toBeNull();
+    expect(authorUrl({ authorId: '1', name: 'x' })).toBe('https://www.semanticscholar.org/author/1');
+    expect(authorUrl({ authorId: 'A1', name: 'x', provider: 'openalex' })).toBe('https://openalex.org/A1');
+    expect(authorUrl({ authorId: null, name: 'x' })).toBeNull();
   });
   it('truncate / formatCount / pubTypeLabel', () => {
     expect(truncate('abcdef', 10)).toBe('abcdef');

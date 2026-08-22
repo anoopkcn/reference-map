@@ -7,8 +7,15 @@ import { appStore } from '../store';
 export function useUrlSync(): void {
   useEffect(() => {
     const initial = readUrlState();
-    if (initial.sel) appStore.getState().select(initial.sel);
-    if (initial.lookups.length) void appStore.getState().addSeeds(initial.lookups);
+    const sel = initial.sel;
+    if (initial.lookups.length) {
+      void appStore
+        .getState()
+        .addSeeds(initial.lookups)
+        .then(() => {
+          if (sel) void appStore.getState().selectByKey(sel);
+        });
+    } else if (sel) void appStore.getState().selectByKey(sel);
 
     const write = debounce(() => {
       const s = appStore.getState();

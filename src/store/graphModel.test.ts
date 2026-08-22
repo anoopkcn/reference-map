@@ -4,6 +4,7 @@ import { GraphModel, R_MAX, R_MIN } from './graphModel';
 
 const mk = (id: string, citationCount = 0, over: Partial<Paper> = {}): Paper => ({
   paperId: id,
+  sources: {},
   title: `Paper ${id}`,
   year: 2020,
   authors: [{ authorId: null, name: `Auth ${id}` }],

@@ -2,7 +2,7 @@ import { memo, useEffect, useState, type ReactNode } from 'react';
 import { displayLookup } from '../lib/ids';
 import { formatCount } from '../lib/format';
 import { useAppStore } from '../store';
-import { usePaper } from '../store/selectors';
+import { useListState, usePaper } from '../store/selectors';
 import type { ListKind, Paper, PaperId, Seed } from '../types';
 import { Icon } from './icons';
 import { PaperActions } from './PaperActions';
@@ -20,6 +20,8 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
   const select = useAppStore((s) => s.select);
   const hover = useAppStore((s) => s.hover);
   const [open, setOpen] = useState<ListKind | null>(null);
+  const refsList = useListState(seed.paperId ?? '', 'refs');
+  const citesList = useListState(seed.paperId ?? '', 'cites');
 
   if (seed.status !== 'ready' || !paper) {
     return (
@@ -36,7 +38,7 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
           <button className="btn ghost icon sm" onClick={() => removeSeed(seed.lookup)} aria-label="Remove"><Icon name="close" /></button>
         </div>
         {seed.status === 'error' && <div className="error-text small">{seed.error}</div>}
-        {seed.status === 'resolving' && <div className="faint small">Looking up on Semantic Scholar…</div>}
+        {seed.status === 'resolving' && <div className="faint small">Looking up…</div>}
       </article>
     );
   }
@@ -87,7 +89,7 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
         <Abstract
           paperId={paper.paperId}
           extra={
-            paper.influentialCitationCount > 0 ? (
+            paper.influentialCitationCount !== null && paper.influentialCitationCount > 0 ? (
               <span className="stat" title="Influential citations (Semantic Scholar)">
                 <Icon name="target" size={13} /> {formatCount(paper.influentialCitationCount)} influential
               </span>
@@ -97,8 +99,8 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
         <PaperActions paper={paper} hideWhenExpanded />
       </div>
       <div className="list-toggles">
-        <ToggleButton kind="refs" count={paper.referenceCount} open={open === 'refs'} onClick={() => toggle('refs')} />
-        <ToggleButton kind="cites" count={paper.citationCount} open={open === 'cites'} onClick={() => toggle('cites')} />
+        <ToggleButton kind="refs" count={refsList?.total ?? paper.referenceCount} open={open === 'refs'} onClick={() => toggle('refs')} />
+        <ToggleButton kind="cites" count={citesList?.total ?? paper.citationCount} open={open === 'cites'} onClick={() => toggle('cites')} />
       </div>
       {open && <PaperList ownerId={paper.paperId} kind={open} />}
     </article>

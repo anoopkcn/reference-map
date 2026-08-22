@@ -1,15 +1,31 @@
-/** Canonical Semantic Scholar paper id (40-hex sha). The ONLY key used in stores and the graph. */
+/**
+ * Canonical, provider-neutral paper id — the ONLY key used in stores and the graph.
+ * Minted from external ids by priority: `doi:<lowercase>` › `arxiv:<id>` › `pmid:<n>` › `mag:<n>` › `s2:<sha>` › `oa:W…`.
+ * Stable once minted (see lib/identity.ts).
+ */
 export type PaperId = string;
 
 /**
- * Anything `/paper/{id}` accepts: a sha, or a prefixed external id such as
- * `DOI:10.1/x`, `ARXIV:2106.15928`, `URL:https://…`, `CorpusId:123`, `PMID:…`, `PMCID:…`, `MAG:…`, `ACL:…`.
+ * Anything the user (or URL) can hand us: `DOI:10.1/x`, `ARXIV:2106.15928`, `URL:https://…`, `CorpusId:123`,
+ * `PMID:…`, `PMCID:…`, `MAG:…`, `ACL:…`, a bare S2 sha, `s2:<sha>`, `oa:W123`, or any canonical PaperId.
  */
 export type Lookup = string;
+
+export type ProviderId = 's2' | 'openalex';
+export const PROVIDER_LABEL: Record<ProviderId, string> = { s2: 'Semantic Scholar', openalex: 'OpenAlex' };
+export const PROVIDER_SHORT: Record<ProviderId, string> = { s2: 'S2', openalex: 'OA' };
 
 export interface Author {
   authorId: string | null;
   name: string;
+  /** Which site `authorId` belongs to (default: Semantic Scholar). */
+  provider?: ProviderId;
+}
+
+/** Native ids of this paper at each provider (for follow-up calls). */
+export interface PaperSources {
+  s2?: string;
+  openalex?: string;
 }
 
 export interface Journal {
@@ -27,6 +43,7 @@ export const DETAIL_RANK: Record<DetailLevel, number> = { search: 0, list: 1, fu
 
 export interface Paper {
   paperId: PaperId;
+  sources: PaperSources;
   title: string;
   year: number | null;
   authors: Author[];
@@ -34,7 +51,8 @@ export interface Paper {
   journal: Journal | null;
   citationCount: number;
   referenceCount: number;
-  influentialCitationCount: number;
+  /** Semantic Scholar metric; null = unknown (paper only seen via OpenAlex). */
+  influentialCitationCount: number | null;
   externalIds: ExternalIds;
   isOpenAccess: boolean;
   openAccessPdf: { url: string; status?: string } | null;
@@ -60,9 +78,11 @@ export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 export interface ListState {
   ids: PaperId[];
   status: LoadStatus;
-  /** Total count reported by S2 (may exceed ids.length when capped by listLimit). */
+  /** Total count reported by the provider (may exceed ids.length when capped by listLimit). */
   total: number | null;
   error?: string;
+  /** Which provider supplied the list. */
+  provider?: ProviderId;
 }
 
 export const NodeRole = { Seed: 0, Cited: 1, Citing: 2, Both: 3, Isolated: 4 } as const;
@@ -79,9 +99,15 @@ export const SORT_KEYS: { key: SortKey; label: string }[] = [
 
 export type LabelMode = 'seeds' | 'auto' | 'all';
 export type Theme = 'system' | 'light' | 'dark';
+/** auto = adaptive routing between providers; otherwise force one. */
+export type SourceMode = 'auto' | 's2' | 'openalex';
 
 export interface Settings {
+  /** Semantic Scholar API key (optional). */
   apiKey: string;
+  /** Contact e-mail for OpenAlex's polite pool (optional). */
+  openalexEmail: string;
+  sourceMode: SourceMode;
   /** refs/cites fetched per paper (≤ 1000). */
   listLimit: number;
   /** New nodes added per direction per expansion. */
@@ -96,6 +122,8 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
+  openalexEmail: '',
+  sourceMode: 'auto',
   listLimit: 500,
   graphExpandLimit: 100,
   autoExpandSeeds: true,
@@ -107,3 +135,5 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const S2_WEB = 'https://www.semanticscholar.org';
 export const S2_API = 'https://api.semanticscholar.org/graph/v1';
+export const OPENALEX_WEB = 'https://openalex.org';
+export const OPENALEX_API = 'https://api.openalex.org';

@@ -1,4 +1,4 @@
-import { S2_WEB, type Author, type Paper, type PaperId } from '../types';
+import { OPENALEX_WEB, S2_WEB, type Author, type Paper, type PaperId } from '../types';
 
 export function s2PaperUrl(id: PaperId): string {
   return `${S2_WEB}/paper/${id}`;
@@ -22,6 +22,30 @@ export function pdfUrl(p: Pick<Paper, 'isOpenAccess' | 'openAccessPdf'>): string
   return p.openAccessPdf?.url || null;
 }
 
+/** Best landing page for a paper: DOI › Semantic Scholar › OpenAlex › arXiv. */
+export function paperUrl(p: Pick<Paper, 'externalIds' | 'sources'>): string | null {
+  return (
+    doiUrl(p) ??
+    (p.sources.s2 ? s2PaperUrl(p.sources.s2) : null) ??
+    (p.sources.openalex ? `${OPENALEX_WEB}/${p.sources.openalex}` : null) ??
+    arxivUrl(p)
+  );
+}
+
+/** Human label for where paperUrl points. */
+export function paperUrlLabel(p: Pick<Paper, 'externalIds' | 'sources'>): string {
+  if (p.externalIds.DOI) return 'Open via DOI';
+  if (p.sources.s2) return 'Open on Semantic Scholar';
+  if (p.sources.openalex) return 'Open on OpenAlex';
+  if (p.externalIds.ArXiv) return 'Open on arXiv';
+  return '';
+}
+
+export function authorUrl(a: Author): string | null {
+  if (!a.authorId) return null;
+  return a.provider === 'openalex' ? `${OPENALEX_WEB}/${a.authorId}` : s2AuthorUrl(a.authorId);
+}
+
 /** Last token of a name ("Ashish Vaswani" → "Vaswani"). */
 export function surname(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -42,9 +66,10 @@ export function nodeLabel(p: Pick<Paper, 'authors' | 'year' | 'title'>): string 
   return p.year ? `${who} ${p.year}` : who;
 }
 
-/** "Journal, vol, pages" — falls back to venue; omits missing parts instead of printing sentinels. */
+/** "Journal, vol, pages" — falls back to venue; omits missing parts instead of printing sentinels (no name → nothing). */
 export function venueLine(p: Pick<Paper, 'venue' | 'journal'>): string {
   const name = p.journal?.name?.trim() || p.venue?.trim() || '';
+  if (!name) return '';
   const parts = [name, p.journal?.volume?.trim(), p.journal?.pages?.trim()].filter((s): s is string => !!s);
   return parts.join(', ');
 }
@@ -54,7 +79,7 @@ export function plainCitation(p: Paper): string {
   const authors = authorsLine(p.authors, 6);
   const year = p.year ? ` (${p.year})` : '';
   const venue = venueLine(p);
-  const link = doiUrl(p) ?? arxivUrl(p) ?? s2PaperUrl(p.paperId);
+  const link = doiUrl(p) ?? arxivUrl(p) ?? paperUrl(p) ?? '';
   return [`${authors}${year}.`, `${p.title}.`, venue ? `${venue}.` : '', link].filter(Boolean).join(' ');
 }
 

@@ -23,8 +23,10 @@ const raw = {
 describe('normalizePaper / mergePaper', () => {
   it('normalizes a raw record at list level', () => {
     const p = normalizePaper(raw, 'list', 5)!;
+    expect(p.paperId).toBe('s2:abc');
+    expect(p.sources).toEqual({ s2: 'abc' });
     expect(p.title).toBe('Attention Is All You Need');
-    expect(p.authors).toEqual([{ authorId: '1', name: 'Ashish Vaswani' }]);
+    expect(p.authors).toEqual([{ authorId: '1', name: 'Ashish Vaswani', provider: 's2' }]);
     expect(p.journal).toEqual({ pages: '5998-6008' });
     expect(p.externalIds).toEqual({ DOI: '10.1/x', CorpusId: '13756489', ArXiv: '1706.03762' });
     expect(p.openAccessPdf).toEqual({ url: 'https://arxiv.org/pdf/1706.03762', status: 'GREEN' });
@@ -48,8 +50,47 @@ describe('normalizePaper / mergePaper', () => {
     expect(m.citationCount).toBe(99);
     expect(m.detailLevel).toBe('full');
     expect(m.abstract).toBe('The dominant…');
-    expect(mergePaper(list, full)).toBe(full);
+    expect(m.bibtex).toBe('@article{…}');
+    expect(mergePaper(list, full).abstract).toBe('The dominant…');
     expect(mergePaper(undefined, list)).toBe(list);
+  });
+  it('merge across providers: keeps the canonical id, unions ids, S2 wins for counts, OpenAlex fills blanks', () => {
+    const s2 = { ...normalizePaper(raw, 'list', 1)!, paperId: 'doi:10.1/x', venue: '', openAccessPdf: null };
+    const oa = {
+      ...s2,
+      paperId: 'doi:10.1/x',
+      sources: { openalex: 'W1' },
+      citationCount: 5,
+      influentialCitationCount: null,
+      venue: 'NeurIPS (OA)',
+      openAccessPdf: { url: 'https://oa.example/pdf' },
+      externalIds: { DOI: '10.1/x', MAG: '77' },
+      fetchedAt: 9,
+      detailLevel: 'full' as const,
+      abstract: 'From OpenAlex',
+      bibtex: null,
+    };
+    const m1 = mergePaper(s2, oa);
+    expect(m1.paperId).toBe('doi:10.1/x');
+    expect(m1.sources).toEqual({ s2: 'abc', openalex: 'W1' });
+    expect(m1.citationCount).toBe(1); // S2 wins
+    expect(m1.influentialCitationCount).toBe(0);
+    expect(m1.venue).toBe('NeurIPS (OA)'); // blank filled
+    expect(m1.openAccessPdf?.url).toBe('https://oa.example/pdf');
+    expect(m1.externalIds).toEqual({ DOI: '10.1/x', CorpusId: '13756489', ArXiv: '1706.03762', MAG: '77' });
+    expect(m1.abstract).toBe('From OpenAlex');
+    expect(m1.detailLevel).toBe('full');
+    expect(m1.fetchedAt).toBe(9);
+    // reverse arrival order gives the same answer for the S2-owned fields
+    const m2 = mergePaper(oa, s2);
+    expect(m2.citationCount).toBe(1);
+    expect(m2.influentialCitationCount).toBe(0);
+    expect(m2.venue).toBe('NeurIPS (OA)');
+    expect(m2.sources).toEqual({ openalex: 'W1', s2: 'abc' });
+    // OA-only merge keeps influential unknown
+    const oa2 = { ...oa, citationCount: 6 };
+    expect(mergePaper(oa, oa2).influentialCitationCount).toBeNull();
+    expect(mergePaper(oa, oa2).citationCount).toBe(6);
   });
 });
 
@@ -71,7 +112,7 @@ describe('S2Client', () => {
     const f = mockFetch(() => ({ body: raw }));
     const c = new S2Client({ queue: queue(), fetchFn: f.fn, getApiKey: () => 'KEY' });
     const p = await c.getPaper('DOI:10.1/x', 'full');
-    expect(p.paperId).toBe('abc');
+    expect(p.paperId).toBe('s2:abc');
     expect(f.calls[0]!.url).toBe('https://api.semanticscholar.org/graph/v1/paper/DOI%3A10.1%2Fx?fields=' + encodeURIComponentLite(fieldsFull()));
     expect(new Headers(f.calls[0]!.init!.headers).get('x-api-key')).toBe('KEY');
   });
@@ -92,8 +133,9 @@ describe('S2Client', () => {
     }));
     const c = new S2Client({ queue: queue(), fetchFn: f.fn });
     const r = await c.getList('abc', 'refs', 500);
-    expect(r.ids).toEqual(['abc', 'def']);
-    expect(r.papers.map((p) => p.paperId)).toEqual(['abc', 'def']);
+    expect(r.ids).toEqual(['s2:abc', 's2:def']);
+    expect(r.papers.map((p) => p.paperId)).toEqual(['s2:abc', 's2:def']);
+    expect(r.total).toBeNull();
     expect(r.hasMore).toBe(true);
     expect(f.calls[0]!.url).toContain('/paper/abc/references?limit=500&fields=');
     const r2 = await c.getList('abc', 'cites', 5000);
@@ -105,7 +147,7 @@ describe('S2Client', () => {
     const f = mockFetch(() => ({ body: [raw, null] }));
     const c = new S2Client({ queue: queue(), fetchFn: f.fn });
     const r = await c.getBatch(['DOI:10.1/x', 'DOI:10.2/y']);
-    expect(r[0]!.paperId).toBe('abc');
+    expect(r[0]!.paperId).toBe('s2:abc');
     expect(r[1]).toBeNull();
     expect(f.calls[0]!.init!.method).toBe('POST');
     expect(JSON.parse(f.calls[0]!.init!.body as string)).toEqual({ ids: ['DOI:10.1/x', 'DOI:10.2/y'] });
@@ -117,7 +159,7 @@ describe('S2Client', () => {
     const c = new S2Client({ queue: queue(), fetchFn: f.fn });
     const r = await c.search('attention is all you need', 10);
     expect(r.total).toBe(1234);
-    expect(r.papers[0]!.paperId).toBe('abc');
+    expect(r.papers[0]!.paperId).toBe('s2:abc');
     expect(f.calls[0]!.url).toContain('/paper/search?query=attention%20is%20all%20you%20need&limit=10&');
   });
 

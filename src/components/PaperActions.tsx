@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import { copyText } from '../lib/clipboard';
-import { doiUrl, pdfUrl, plainCitation, s2PaperUrl } from '../lib/format';
+import { generateBibtex } from '../lib/bibtex';
+import { doiUrl, paperUrl, paperUrlLabel, pdfUrl, plainCitation } from '../lib/format';
 import { useAppStore } from '../store';
 import { useIsExpanding, useIsSeed } from '../store/selectors';
 import type { Paper } from '../types';
@@ -33,12 +34,8 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
       try {
         let text: string | null = null;
         if (what === 'bibtex') {
-          const p = await ensureDetail(paper.paperId);
-          text = p?.bibtex ?? null;
-          if (!text) {
-            pushToast('No BibTeX available for this paper', 'error');
-            return;
-          }
+          const p = (await ensureDetail(paper.paperId)) ?? paper;
+          text = p.bibtex || generateBibtex(p);
         } else if (what === 'cite') text = plainCitation(paper);
         else text = doiUrl(paper);
         if (text && (await copyText(text))) pushToast('Copied to clipboard');
@@ -76,8 +73,8 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
           <Icon name="file" />{!compact && ' PDF'}
         </a>
       )}
-      {compact && (
-        <a className={size} href={s2PaperUrl(paper.paperId)} target="_blank" rel="noopener noreferrer" title="Open on Semantic Scholar">
+      {compact && paperUrl(paper) && (
+        <a className={size} href={paperUrl(paper)!} target="_blank" rel="noopener noreferrer" title={paperUrlLabel(paper)}>
           <Icon name="external" />
         </a>
       )}

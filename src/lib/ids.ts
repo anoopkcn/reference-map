@@ -7,7 +7,8 @@ export type ParsedInput =
   | { kind: 'empty' };
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
-const PREFIX_RE = /^(corpusid|pmid|pmcid|mag|acl|arxiv|doi|url)\s*:\s*(\S.*)$/i;
+const PREFIX_RE = /^(corpusid|pmid|pmcid|mag|acl|arxiv|doi|url|s2|oa|openalex)\s*:\s*(\S.*)$/i;
+const OPENALEX_W_RE = /^W\d{4,}$/i;
 /** DOI anywhere in a string. Permissive tail; trailing punctuation is stripped afterwards. */
 const DOI_RE = /(10\.\d{4,9}\/[^\s"']+)/i;
 const ARXIV_NEW_RE = /^(\d{4}\.\d{4,5})(?:v\d+)?$/i;
@@ -24,6 +25,9 @@ const CANONICAL_PREFIX: Record<string, string> = {
   arxiv: 'ARXIV',
   doi: 'DOI',
   url: 'URL',
+  s2: 's2',
+  oa: 'oa',
+  openalex: 'oa',
 };
 
 /** Hosts Semantic Scholar accepts for `URL:` lookups. */
@@ -94,6 +98,10 @@ function normalizeUrl(raw: string): Lookup | null {
     const id = m ? normalizeArxiv(m[1]!) : null;
     return id ? `ARXIV:${id}` : `URL:${u.href}`;
   }
+  if (hostMatches(host, 'openalex.org')) {
+    const m = /\/(?:works\/)?(W\d{4,})(?:[/?#]|$)/i.exec(path);
+    return m ? `oa:${m[1]!.toUpperCase()}` : null;
+  }
   if (hostMatches(host, 'semanticscholar.org')) {
     const m = /\/paper\/(?:[^/]+\/)?([0-9a-f]{40})(?:[/?#]|$)/i.exec(path);
     if (m) return m[1]!.toLowerCase();
@@ -163,6 +171,10 @@ export function normalizeLookup(token: string): Lookup | null {
       }
       case 'URL':
         return normalizeUrl(value);
+      case 's2':
+        return SHA_RE.test(value) ? `s2:${value.toLowerCase()}` : null;
+      case 'oa':
+        return OPENALEX_W_RE.test(value) ? `oa:${value.toUpperCase()}` : null;
       case 'PMCID':
         return `PMCID:${value.replace(/^PMC/i, '')}`;
       case 'ACL':
@@ -181,6 +193,8 @@ export function normalizeLookup(token: string): Lookup | null {
   if (arxiv) return `ARXIV:${arxiv}`;
 
   if (URL_LIKE_RE.test(t)) return normalizeUrl(t.split(/\s+/)[0]!);
+
+  if (OPENALEX_W_RE.test(t)) return `oa:${t.toUpperCase()}`;
 
   const doi = extractDoi(t);
   if (doi) return `DOI:${doi}`;
@@ -243,8 +257,10 @@ export function displayLookup(lookup: Lookup): string {
   if (i < 0) return lookup;
   const prefix = lookup.slice(0, i);
   const value = lookup.slice(i + 1);
-  if (prefix === 'DOI') return value;
-  if (prefix === 'ARXIV') return `arXiv:${value}`;
-  if (prefix === 'URL') return value.replace(/^https?:\/\/(www\.)?/, '');
+  if (prefix === 'DOI' || prefix === 'doi') return value;
+  if (prefix === 'ARXIV' || prefix === 'arxiv') return `arXiv:${value}`;
+  if (prefix === 'URL' || prefix === 'url') return value.replace(/^https?:\/\/(www\.)?/, '');
+  if (prefix === 's2') return value.slice(0, 10) + '…';
+  if (prefix === 'oa') return value;
   return lookup;
 }

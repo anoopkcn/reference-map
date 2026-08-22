@@ -23,12 +23,12 @@ export interface S2PaperRaw {
 
 const EXTERNAL_KEYS = ['DOI', 'ArXiv', 'MAG', 'ACL', 'PubMed', 'PubMedCentral', 'DBLP', 'CorpusId'] as const;
 
-/** Convert a raw S2 paper to our Paper. Returns null when the record has no paperId. */
+/** Convert a raw S2 paper to our Paper (provisional id `s2:<sha>`). Returns null when the record has no paperId. */
 export function normalizePaper(raw: S2PaperRaw | null | undefined, level: DetailLevel, now = Date.now()): Paper | null {
   if (!raw || !raw.paperId) return null;
   const authors: Author[] = (raw.authors ?? [])
     .filter((a): a is { authorId?: string | null; name?: string | null } => !!a && !!a.name)
-    .map((a) => ({ authorId: a.authorId ?? null, name: a.name!.trim() }));
+    .map((a) => ({ authorId: a.authorId ?? null, name: a.name!.trim(), provider: 's2' }));
   const externalIds: ExternalIds = {};
   if (raw.externalIds) {
     for (const k of EXTERNAL_KEYS) {
@@ -44,7 +44,8 @@ export function normalizePaper(raw: S2PaperRaw | null | undefined, level: Detail
     if (raw.journal.pages) journal.pages = raw.journal.pages;
   }
   const p: Paper = {
-    paperId: raw.paperId,
+    paperId: `s2:${raw.paperId}`,
+    sources: { s2: raw.paperId },
     title: (raw.title ?? '').trim() || 'Untitled',
     year: typeof raw.year === 'number' ? raw.year : null,
     authors,
@@ -69,14 +70,44 @@ export function normalizePaper(raw: S2PaperRaw | null | undefined, level: Detail
 }
 
 /**
- * Merge a newly fetched record into an existing one. Never downgrades detail: a 'list'-level fetch
- * refreshes counts/metadata but keeps the abstract/bibtex of an earlier 'full' fetch.
+ * Merge a newly fetched record into an existing one for the same paper (possibly from another provider).
+ * - The canonical `paperId` of `prev` is kept; `sources` / `externalIds` are unioned.
+ * - Detail never downgrades: a 'list' fetch refreshes metadata but keeps an earlier abstract/BibTeX.
+ * - For metadata and counts, Semantic Scholar wins when it is known; OpenAlex fills the blanks.
  */
 export function mergePaper(prev: Paper | undefined, next: Paper): Paper {
   if (!prev) return next;
-  if (DETAIL_RANK[next.detailLevel] >= DETAIL_RANK[prev.detailLevel]) return next;
-  const merged: Paper = { ...next, detailLevel: prev.detailLevel };
-  if (prev.abstract !== undefined) merged.abstract = prev.abstract;
-  if (prev.bibtex !== undefined) merged.bibtex = prev.bibtex;
+  const nextIsS2 = !!next.sources.s2 && !next.sources.openalex;
+  const prevHasS2 = !!prev.sources.s2;
+  const preferNext = nextIsS2 || !prevHasS2;
+  const base = preferNext ? next : prev;
+  const other = preferNext ? prev : next;
+  const s2Rec = nextIsS2 ? next : prevHasS2 ? prev : null;
+  const merged: Paper = {
+    ...base,
+    paperId: prev.paperId,
+    sources: { ...prev.sources, ...next.sources },
+    externalIds: { ...other.externalIds, ...base.externalIds },
+    detailLevel: DETAIL_RANK[next.detailLevel] >= DETAIL_RANK[prev.detailLevel] ? next.detailLevel : prev.detailLevel,
+    fetchedAt: Math.max(prev.fetchedAt, next.fetchedAt),
+    title: base.title && base.title !== 'Untitled' ? base.title : other.title,
+    year: base.year ?? other.year,
+    authors: base.authors.length ? base.authors : other.authors,
+    venue: base.venue || other.venue,
+    journal: base.journal ?? other.journal,
+    isOpenAccess: base.isOpenAccess || other.isOpenAccess,
+    openAccessPdf: base.openAccessPdf ?? other.openAccessPdf,
+    publicationTypes: base.publicationTypes.length ? base.publicationTypes : other.publicationTypes,
+    publicationDate: base.publicationDate ?? other.publicationDate,
+    influentialCitationCount: s2Rec ? s2Rec.influentialCitationCount : null,
+  };
+  // abstract / bibtex: a defined value wins (null = fetched but none); S2's BibTeX preferred.
+  const abstract = base.abstract ?? other.abstract;
+  if (abstract !== undefined) merged.abstract = abstract;
+  else delete merged.abstract;
+  const bibtex = (s2Rec?.bibtex ?? null) || base.bibtex || other.bibtex;
+  if (bibtex) merged.bibtex = bibtex;
+  else if (base.bibtex !== undefined || other.bibtex !== undefined) merged.bibtex = null;
+  else delete merged.bibtex;
   return merged;
 }

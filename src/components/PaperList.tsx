@@ -4,7 +4,7 @@ import { filterIds, sortIds } from '../lib/sort';
 import { formatCount } from '../lib/format';
 import { useAppStore } from '../store';
 import { useListState } from '../store/selectors';
-import type { ListKind, PaperId, SortDir, SortKey } from '../types';
+import { PROVIDER_LABEL, type ListKind, type PaperId, type SortDir, type SortKey } from '../types';
 import { Icon } from './icons';
 import { PaperRow, ROW_HEIGHT } from './PaperRow';
 import { SortControl } from './SortControl';
@@ -54,7 +54,7 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
         {list?.status === 'ready' && (
           <span>
             {query ? `${visibleIds.length} of ${ids.length}` : formatCount(ids.length)} {label}
-            {capped && <span title={`Semantic Scholar reports ${total}; showing the first ${ids.length} (raise the limit in settings)`}> · of {formatCount(total)}</span>}
+            {capped && <span title={`${PROVIDER_LABEL[list?.provider ?? 's2']} reports ${total}; showing the first ${ids.length} (raise the limit in settings)`}> · of {formatCount(total)}</span>}
           </span>
         )}
       </div>

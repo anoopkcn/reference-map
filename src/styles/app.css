@@ -234,3 +234,7 @@ button:disabled { cursor: default; opacity: 0.5; }
 @media (max-width: 900px) {
   .side-panel { position: absolute; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 60%; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); }
 }
+
+/* ---------- provenance chips ---------- */
+.source-chips { display: inline-flex; gap: 3px; margin-left: 2px; }
+.source-chip { display: inline-flex; align-items: center; height: 16px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; color: var(--text-faint); border: 1px solid var(--border); background: transparent; }
