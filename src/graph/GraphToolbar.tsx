@@ -1,4 +1,5 @@
 import type { RefObject } from 'react';
+import { Tabs, type Tab } from '../App';
 import { Icon } from '../components/icons';
 import { useAppStore } from '../store';
 import type { LabelMode } from '../types';
@@ -7,7 +8,19 @@ import type { GraphControls } from './GraphCanvas';
 const LABEL_CYCLE: LabelMode[] = ['seeds', 'auto', 'all'];
 const LABEL_TITLE: Record<LabelMode, string> = { seeds: 'Labels: seeds only', auto: 'Labels: auto (zoom in for more)', all: 'Labels: all' };
 
-export function GraphToolbar({ controls, legendOpen, onToggleLegend }: { controls: RefObject<GraphControls | null>; legendOpen: boolean; onToggleLegend: () => void }) {
+export function GraphToolbar({
+  controls,
+  legendOpen,
+  onToggleLegend,
+  tab,
+  onTab,
+}: {
+  controls: RefObject<GraphControls | null>;
+  legendOpen: boolean;
+  onToggleLegend: () => void;
+  tab: Tab;
+  onTab: (t: Tab) => void;
+}) {
   const nodes = useAppStore((s) => (s.graphVersion, s.graph.nodeCount));
   const edges = useAppStore((s) => (s.graphVersion, s.graph.edgeCount));
   const pinned = useAppStore((s) => (s.graphVersion, countPinned(s.graph)));
@@ -17,6 +30,9 @@ export function GraphToolbar({ controls, legendOpen, onToggleLegend }: { control
   const nextLabel = LABEL_CYCLE[(LABEL_CYCLE.indexOf(labelMode) + 1) % LABEL_CYCLE.length]!;
   return (
     <div className="graph-toolbar">
+      <div className="tool-group mobile-tabs">
+        <Tabs tab={tab} onTab={onTab} />
+      </div>
       <div className="tool-group">
         <button className="btn icon" onClick={() => controls.current?.fit()} title="Fit map to view" aria-label="Fit to view" disabled={nodes === 0}><Icon name="fit" /></button>
         <button className="btn icon" onClick={() => controls.current?.reheat()} title="Re-run layout" aria-label="Re-run layout" disabled={nodes === 0}><Icon name="refresh" /></button>

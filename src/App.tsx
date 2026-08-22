@@ -12,7 +12,7 @@ export function App() {
   const resolved = useTheme();
   useUrlSync();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [tab, setTab] = useState<'cards' | 'graph'>('cards');
+  const [tab, setTab] = useState<Tab>('cards');
   const update = useAppStore((s) => s.updateSettings);
   const select = useAppStore((s) => s.select);
 
@@ -26,25 +26,36 @@ export function App() {
 
   return (
     <div className="app" data-tab={tab}>
-      <header className="header">
-        <div className="brand"><Logo /> Reference Map</div>
-        <div className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'cards'} className={tab === 'cards' ? 'active' : ''} onClick={() => setTab('cards')}>Papers</button>
-          <button role="tab" aria-selected={tab === 'graph'} className={tab === 'graph' ? 'active' : ''} onClick={() => setTab('graph')}>Map</button>
-        </div>
-        <div className="header-spacer" />
-        <QueuePill />
-        <button className="btn ghost icon" onClick={() => update({ theme: resolved === 'dark' ? 'light' : 'dark' })} title={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} theme`} aria-label="Toggle theme">
-          <Icon name={resolved === 'dark' ? 'sun' : 'moon'} />
-        </button>
-        <button className="btn ghost icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings"><Icon name="settings" /></button>
-      </header>
       <main className="main">
-        <aside className="sidebar"><SeedPanel /></aside>
-        <GraphPanel themeKey={resolved} />
+        <aside className="sidebar">
+          <header className="header">
+            <div className="brand"><Logo /> Reference Map</div>
+            <Tabs tab={tab} onTab={setTab} />
+            <div className="header-spacer" />
+            <QueuePill />
+            <button className="btn ghost icon" onClick={() => update({ theme: resolved === 'dark' ? 'light' : 'dark' })} title={`Switch to ${resolved === 'dark' ? 'light' : 'dark'} theme`} aria-label="Toggle theme">
+              <Icon name={resolved === 'dark' ? 'sun' : 'moon'} />
+            </button>
+            <button className="btn ghost icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings"><Icon name="settings" /></button>
+          </header>
+          <SeedPanel />
+        </aside>
+        <GraphPanel themeKey={resolved} tab={tab} onTab={setTab} />
       </main>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Toasts />
+    </div>
+  );
+}
+
+export type Tab = 'cards' | 'graph';
+
+/** Papers / Map switcher, shown only on narrow screens. */
+export function Tabs({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  return (
+    <div className="tabs" role="tablist">
+      <button role="tab" aria-selected={tab === 'cards'} className={tab === 'cards' ? 'active' : ''} onClick={() => onTab('cards')}>Papers</button>
+      <button role="tab" aria-selected={tab === 'graph'} className={tab === 'graph' ? 'active' : ''} onClick={() => onTab('graph')}>Map</button>
     </div>
   );
 }
@@ -63,9 +74,12 @@ function QueuePill() {
   if (!busy && !paused) return null;
   const secs = paused ? Math.max(0, Math.ceil((q.pausedUntil! - Date.now()) / 1000)) : 0;
   return (
-    <div className={`pill ${paused ? 'warn' : ''}`} title={paused ? 'Semantic Scholar asked us to slow down; requests resume automatically' : 'Requests waiting for the rate limiter'}>
+    <div
+      className={`pill ${paused ? 'warn' : ''}`}
+      title={paused ? `Semantic Scholar asked us to slow down — retrying in ${secs}s` : `${busy} request${busy > 1 ? 's' : ''} waiting for the rate limiter`}
+    >
       {paused ? <Icon name="alert" size={13} /> : <span className="spinner" />}
-      {paused ? `Rate limited · retry in ${secs}s` : `${busy} request${busy > 1 ? 's' : ''} queued`}
+      {paused ? `Limited · ${secs}s` : `${busy} queued`}
     </div>
   );
 }

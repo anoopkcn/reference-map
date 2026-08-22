@@ -53,7 +53,7 @@ export function Icon({ name, size = 16, ...rest }: { name: IconName; size?: numb
   );
 }
 
-export function Logo({ size = 22 }: { size?: number }) {
+export function Logo({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden="true">
       <line x1="32" y1="32" x2="14" y2="20" stroke="currentColor" strokeWidth="4" opacity="0.45" />
