@@ -1,6 +1,7 @@
 import type { Identity } from '../lib/identity';
 import type { DetailLevel, ListKind, Lookup, Paper, ProviderId, SourceMode } from '../types';
 import { ApiError, NotFoundError, UnsupportedLookupError, isAbort } from './errors';
+import { hasUnicodeReplacement, repairUnicodeMetadata } from './normalize';
 import type { ListResult, OpKind, Provider, SearchResult } from './provider';
 import type { EnqueueOptions } from './queue';
 
@@ -78,6 +79,7 @@ export class Router {
     const cands = this.candidates(kind, (p) => p.supportsList(kind) && p.lookupFor(paper) !== null, paper.paperId);
     const { value, provider } = await this.runTagged(kind, cands, (p, signal) => p.getList(p.lookupFor(paper)!, kind, limit, { ...o, signal }), o.signal);
     await this.identity.assign(value.papers);
+    value.papers = await this.repairCorruptedMetadata(value.papers, o);
     const seen = new Set<string>();
     const ids: string[] = [];
     for (const p of value.papers) {
@@ -86,6 +88,38 @@ export class Router {
       ids.push(p.paperId);
     }
     return { ...value, ids, provider };
+  }
+
+  /** Replace provider-side U+FFFD damage with clean Semantic Scholar text when available. */
+  async repairCorruptedMetadata(papers: readonly Paper[], o: EnqueueOptions = {}): Promise<Paper[]> {
+    if (this.getMode() !== 'auto') return [...papers];
+    const s2 = this.providers.s2;
+    if (!s2) return [...papers];
+
+    const repairable = papers
+      .map((paper, index) => ({ paper, index, lookup: hasUnicodeReplacement(paper) ? s2.lookupFor(paper) : null }))
+      .filter((entry): entry is { paper: Paper; index: number; lookup: string } => entry.lookup !== null);
+    if (repairable.length === 0) return [...papers];
+
+    try {
+      const fallbacks = await s2.getBatch(
+        repairable.map((entry) => entry.lookup),
+        'list',
+        o,
+      );
+      await this.identity.assign(fallbacks.filter((fallback): fallback is Paper => !!fallback));
+      const repaired = [...papers];
+      fallbacks.forEach((fallback, index) => {
+        if (fallback) {
+          const entry = repairable[index]!;
+          repaired[entry.index] = repairUnicodeMetadata(entry.paper, fallback);
+        }
+      });
+      return repaired;
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      return [...papers];
+    }
   }
 
   /** Aligned with input. Each lookup goes to the best capable provider; misses get one more try elsewhere. */

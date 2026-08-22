@@ -49,7 +49,7 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
       <div className="list-head">
         <div className="search-box">
           <Icon name="search" />
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Filter ${label}…`} aria-label={`Filter ${label}`} />
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`Filter ${label}…`} aria-label={`Filter ${label}`} dir="auto" />
           {query && (
             <button className="btn ghost icon sm clear" onClick={() => setQuery('')} aria-label="Clear filter">
               <Icon name="close" />

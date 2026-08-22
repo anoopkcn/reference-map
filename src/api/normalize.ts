@@ -111,3 +111,47 @@ export function mergePaper(prev: Paper | undefined, next: Paper): Paper {
   else delete merged.bibtex;
   return merged;
 }
+
+/** True when a provider has already lost one or more Unicode characters while decoding metadata. */
+export function hasUnicodeReplacement(paper: Paper): boolean {
+  return (
+    paper.title.includes('\uFFFD') ||
+    paper.authors.some((author) => author.name.includes('\uFFFD')) ||
+    paper.venue.includes('\uFFFD') ||
+    (!!paper.journal && Object.values(paper.journal).some((value) => value?.includes('\uFFFD')))
+  );
+}
+
+/**
+ * Repair only damaged text with a clean copy from another provider.
+ * The primary record keeps its richer metadata, counts, and provider-native author ids.
+ */
+export function repairUnicodeMetadata(primary: Paper, fallback: Paper): Paper {
+  const clean = (value: string | undefined): value is string => !!value && !value.includes('\uFFFD');
+  const repair = (value: string, replacement: string | undefined): string =>
+    value.includes('\uFFFD') && clean(replacement) ? replacement : value;
+  const fallbackJournal = fallback.journal;
+  const journal = primary.journal
+    ? {
+        ...primary.journal,
+        ...(primary.journal.name?.includes('\uFFFD') && clean(fallbackJournal?.name) ? { name: fallbackJournal.name } : {}),
+        ...(primary.journal.volume?.includes('\uFFFD') && clean(fallbackJournal?.volume) ? { volume: fallbackJournal.volume } : {}),
+        ...(primary.journal.pages?.includes('\uFFFD') && clean(fallbackJournal?.pages) ? { pages: fallbackJournal.pages } : {}),
+      }
+    : primary.journal;
+
+  return {
+    ...primary,
+    sources: { ...primary.sources, ...fallback.sources },
+    externalIds: { ...primary.externalIds, ...fallback.externalIds },
+    title: repair(primary.title, fallback.title),
+    authors: primary.authors.map((author, index) => ({
+      ...author,
+      name: repair(author.name, fallback.authors[index]?.name),
+    })),
+    venue: repair(primary.venue, fallback.venue),
+    journal,
+    influentialCitationCount: primary.influentialCitationCount ?? fallback.influentialCitationCount,
+    fetchedAt: Math.max(primary.fetchedAt, fallback.fetchedAt),
+  };
+}

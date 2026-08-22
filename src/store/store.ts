@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { isFresh, MemoryCache, paperSatisfies, PROVIDERS, TTL, type CacheAdapter, type CachedList } from '../api/cache';
 import { describeError, isAbort, NotFoundError } from '../api/errors';
-import { mergePaper } from '../api/normalize';
+import { hasUnicodeReplacement, mergePaper } from '../api/normalize';
 import { PRIORITY } from '../api/provider';
 import { AUTH_QUEUE, UNAUTH_QUEUE } from '../api/queue';
 import type { ProviderStatus, Router } from '../api/router';
@@ -152,6 +152,10 @@ export function createAppStore(deps: StoreDeps) {
         else stillMissing.push(id);
       }
       upsertPapers(fresh);
+      if (fresh.some(hasUnicodeReplacement)) {
+        const repaired = await router.repairCorruptedMetadata(fresh, { priority: PRIORITY.list });
+        upsertPapers(repaired);
+      }
       if (stillMissing.length) {
         const fetched = await router.getBatch(stillMissing, 'list', { priority: PRIORITY.list });
         upsertPapers(fetched.filter((p): p is Paper => !!p));

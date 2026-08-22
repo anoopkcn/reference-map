@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, RateLimitedError } from './errors';
-import { mergePaper, normalizePaper } from './normalize';
+import { hasUnicodeReplacement, mergePaper, normalizePaper, repairUnicodeMetadata } from './normalize';
 import { RequestQueue } from './queue';
 import { S2Client, parseRetryAfter } from './s2';
 
@@ -42,6 +42,46 @@ describe('normalizePaper / mergePaper', () => {
     expect(p.bibtex).toBe('@article{…}');
     expect(normalizePaper({ ...raw, paperId: null }, 'list')).toBeNull();
     expect(normalizePaper(null, 'list')).toBeNull();
+  });
+  it('preserves non-Latin and right-to-left metadata', () => {
+    const p = normalizePaper({
+      ...raw,
+      title: '注意力だけで十分である',
+      authors: [{ authorId: '2', name: '李 雷' }, { authorId: '3', name: 'أحمد محمد' }],
+      venue: 'ニューラル情報処理システム会議',
+      abstract: 'هذه خلاصة باللغة العربية.',
+    }, 'full')!;
+    expect(p.title).toBe('注意力だけで十分である');
+    expect(p.authors.map((author) => author.name)).toEqual(['李 雷', 'أحمد محمد']);
+    expect(p.venue).toBe('ニューラル情報処理システム会議');
+    expect(p.abstract).toBe('هذه خلاصة باللغة العربية.');
+  });
+  it('repairs only Unicode replacement damage using clean fallback metadata', () => {
+    const primary = {
+      ...normalizePaper(raw, 'list', 1)!,
+      sources: { openalex: 'W1' },
+      title: 'Prim\uFFFDrzerlegung in Steinschen Algebren',
+      authors: [{ authorId: 'A1', name: 'J\uFFFDrgen Neukirch', provider: 'openalex' as const }],
+      venue: 'Mathematische Annalen',
+      citationCount: 30,
+      externalIds: { DOI: '10.1007/example', MAG: '1' },
+    };
+    const fallback = {
+      ...normalizePaper(raw, 'list', 2)!,
+      title: 'Primärzerlegung in Steinschen Algebren',
+      authors: [{ authorId: 'S1', name: 'Jürgen Neukirch', provider: 's2' as const }],
+      venue: '',
+      externalIds: { DOI: '10.1007/example', CorpusId: '2' },
+    };
+    expect(hasUnicodeReplacement(primary)).toBe(true);
+    const repaired = repairUnicodeMetadata(primary, fallback);
+    expect(repaired.title).toBe('Primärzerlegung in Steinschen Algebren');
+    expect(repaired.authors).toEqual([{ authorId: 'A1', name: 'Jürgen Neukirch', provider: 'openalex' }]);
+    expect(repaired.venue).toBe('Mathematische Annalen');
+    expect(repaired.citationCount).toBe(30);
+    expect(repaired.sources).toEqual({ openalex: 'W1', s2: 'abc' });
+    expect(repaired.externalIds).toEqual({ DOI: '10.1007/example', MAG: '1', CorpusId: '2' });
+    expect(hasUnicodeReplacement(repaired)).toBe(false);
   });
   it('merge never downgrades detail', () => {
     const full = normalizePaper(raw, 'full', 1)!;

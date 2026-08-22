@@ -140,7 +140,7 @@ export function Abstract({ paperId, extra }: { paperId: PaperId; extra?: ReactNo
         {extra}
       </div>
       {open && (
-        <div className="abstract-text">
+        <div className="abstract-text" dir="auto">
           {loading && paper.abstract === undefined ? (
             <span className="muted"><span className="spinner" /> Loading…</span>
           ) : paper.abstract ? (

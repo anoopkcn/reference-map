@@ -49,4 +49,16 @@ describe('generateBibtex', () => {
     expect(misc).not.toContain('author');
     expect(misc).not.toContain('url');
   });
+  it('preserves Unicode metadata while keeping a portable ASCII citation key', () => {
+    const bib = generateBibtex({
+      ...paper,
+      title: '注意力だけで十分である',
+      authors: [{ authorId: null, name: '李 雷' }],
+      venue: '情報処理学会',
+    });
+    expect(bib).toContain('@inproceedings{anon2017paper,');
+    expect(bib).toContain('title = {注意力だけで十分である}');
+    expect(bib).toContain('author = {李 雷}');
+    expect(bib).toContain('booktitle = {情報処理学会}');
+  });
 });

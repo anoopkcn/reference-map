@@ -13,11 +13,11 @@ export const PaperMeta = memo(function PaperMeta({ paper, variant }: { paper: Pa
     const venue = venueLine(paper);
     return (
       <div className="meta compact">
-        <div className="title" title={paper.title}>{paper.title}</div>
+        <div className="title" title={paper.title} dir="auto">{paper.title}</div>
         <div className="metaline">
-          {who && <span>{who}</span>}
+          {who && <span dir="auto">{who}</span>}
           {paper.year && <span>{paper.year}</span>}
-          {venue && <span className="venue" title={venue}>{venue}</span>}
+          {venue && <span className="venue" title={venue} dir="auto">{venue}</span>}
         </div>
       </div>
     );
@@ -26,7 +26,7 @@ export const PaperMeta = memo(function PaperMeta({ paper, variant }: { paper: Pa
   const url = paperUrl(paper);
   return (
     <div className="meta full">
-      <h3 className="title">
+      <h3 className="title" dir="auto">
         {url ? (
           <a href={url} target="_blank" rel="noopener noreferrer" title={paperUrlLabel(paper)}>
             {paper.title}
@@ -38,7 +38,7 @@ export const PaperMeta = memo(function PaperMeta({ paper, variant }: { paper: Pa
       <Authors paper={paper} />
       <div className="metaline">
         {paper.year && <span className="year">{paper.year}</span>}
-        {venue && <span className="venue">{venue}</span>}
+        {venue && <span className="venue" dir="auto">{venue}</span>}
         {paper.publicationTypes.map((t) => (
           <span key={t} className="chip">{pubTypeLabel(t)}</span>
         ))}
@@ -67,7 +67,7 @@ function Authors({ paper }: { paper: Paper }) {
   const shown = all ? paper.authors : paper.authors.slice(0, MAX_AUTHORS);
   const extra = paper.authors.length - shown.length;
   return (
-    <div className="authors" title={authorsLine(paper.authors)}>
+    <div className="authors" title={authorsLine(paper.authors)} dir="auto">
       {shown.map((a, i) => {
         const href = authorUrl(a);
         return (

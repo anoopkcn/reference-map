@@ -58,6 +58,7 @@ export function SeedInput() {
           onPaste={onPaste}
           placeholder="DOI, arXiv id, URL, or paper title…"
           aria-label="Add a paper by identifier or search by title"
+          dir="auto"
           autoFocus
           spellCheck={false}
         />

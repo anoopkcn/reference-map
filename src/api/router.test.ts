@@ -49,6 +49,8 @@ class Fake implements Provider {
   delayMs = 0;
   fail: unknown = null;
   aborted = 0;
+  corruptListText = false;
+  batchAuthorName: string | null = null;
   constructor(
     readonly id: ProviderId,
     private accept: RegExp,
@@ -93,11 +95,20 @@ class Fake implements Provider {
   getList(native: string, kind: ListKind, _limit: number, o?: EnqueueOptions): Promise<ListResult> {
     return this.go(`${kind}:${native}`, () => {
       const papers = [mk(this.id, `${native}-a`, '10.1/shared'), mk(this.id, `${native}-b`)];
+      if (this.corruptListText) {
+        papers[0]!.title = '\uFFFDber unirationale Scharen';
+        papers[0]!.authors = [{ authorId: 'A1', name: 'J\uFFFDrgen Neukirch', provider: this.id }];
+      }
       return { ids: papers.map((p) => p.paperId), papers, hasMore: false, total: 2 };
     }, o);
   }
   getBatch(lookups: readonly Lookup[], _level: DetailLevel, o?: EnqueueOptions) {
-    return this.go(`batch:${lookups.join(',')}`, () => lookups.map((l) => (this.toNative(l) && !l.includes('missing') ? mk(this.id, l, l.startsWith('DOI:') ? l.slice(4) : undefined) : null)), o);
+    return this.go(`batch:${lookups.join(',')}`, () => lookups.map((l) => {
+      if (!this.toNative(l) || l.includes('missing')) return null;
+      const paper = mk(this.id, l, l.startsWith('DOI:') ? l.slice(4) : undefined);
+      if (this.batchAuthorName) paper.authors = [{ authorId: 'S1', name: this.batchAuthorName, provider: this.id }];
+      return paper;
+    }), o);
   }
   search(query: string, _limit: number, o?: EnqueueOptions): Promise<SearchResult> {
     return this.go(`search:${query}`, () => ({ papers: [mk(this.id, 'hit')], total: 1 }), o);
@@ -209,6 +220,21 @@ describe('Router', () => {
     expect(related.provider).toBe('openalex');
     expect(s2.calls).toEqual([]);
     expect(oa.calls).toEqual(['related:DOI:10.1/s']);
+  });
+
+  it('repairs OpenAlex replacement characters from Semantic Scholar without changing clean related records', async () => {
+    oa.corruptListText = true;
+    s2.batchAuthorName = 'Jürgen Neukirch';
+    const r = make();
+    const seed = { ...mk('s2', 'S', '10.1/s'), sources: { s2: 'S' } };
+    const related = await r.getList(seed, 'related', 10);
+    expect(related.papers[0]).toMatchObject({
+      title: 'Paper DOI:10.1/shared',
+      authors: [{ authorId: 'A1', name: 'Jürgen Neukirch', provider: 'openalex' }],
+      sources: { openalex: 'DOI:10.1/s-a', s2: 'DOI:10.1/shared' },
+    });
+    expect(related.papers[1]!.title).toBe('Paper DOI:10.1/s-b');
+    expect(s2.calls).toEqual(['batch:DOI:10.1/shared']);
   });
 
   it('uses operation-specific latency history when choosing a provider', async () => {
