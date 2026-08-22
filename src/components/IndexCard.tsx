@@ -3,7 +3,7 @@ import { displayLookup } from '../lib/ids';
 import { formatCount } from '../lib/format';
 import { useAppStore } from '../store';
 import { useListState, usePaper } from '../store/selectors';
-import type { ListKind, Paper, PaperId, Seed } from '../types';
+import type { GraphListKind, Paper, PaperId, Seed } from '../types';
 import { Icon } from './icons';
 import { PaperActions } from './PaperActions';
 import { PaperList } from './PaperList';
@@ -19,7 +19,7 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
   const selected = useAppStore((s) => !!seed.paperId && s.selectedId === seed.paperId);
   const select = useAppStore((s) => s.select);
   const hover = useAppStore((s) => s.hover);
-  const [open, setOpen] = useState<ListKind | null>(null);
+  const [open, setOpen] = useState<GraphListKind | null>(null);
   const refsList = useListState(seed.paperId ?? '', 'refs');
   const citesList = useListState(seed.paperId ?? '', 'cites');
 
@@ -43,7 +43,7 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
     );
   }
 
-  const toggle = (kind: ListKind) => setOpen((cur) => (cur === kind ? null : kind));
+  const toggle = (kind: GraphListKind) => setOpen((cur) => (cur === kind ? null : kind));
 
   return (
     <article
@@ -107,7 +107,7 @@ export const IndexCard = memo(function IndexCard({ seed }: { seed: Seed }) {
   );
 });
 
-function ToggleButton({ kind, count, open, onClick }: { kind: ListKind; count: number; open: boolean; onClick: () => void }) {
+function ToggleButton({ kind, count, open, onClick }: { kind: GraphListKind; count: number; open: boolean; onClick: () => void }) {
   const label = kind === 'refs' ? 'References' : 'Citations';
   return (
     <button className={`toggle ${open ? 'active' : ''}`} onClick={onClick} disabled={count === 0} aria-expanded={open} title={kind === 'refs' ? 'Papers this paper cites' : 'Papers citing this paper'}>

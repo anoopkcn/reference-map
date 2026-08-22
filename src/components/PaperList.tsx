@@ -9,7 +9,7 @@ import { Icon } from './icons';
 import { PaperRow, ROW_HEIGHT } from './PaperRow';
 import { SortControl } from './SortControl';
 
-/** References / citations of one paper: lazy-loaded, filterable, sortable, windowed. */
+/** References, citations, or related works: lazy-loaded, filterable, sortable, windowed. */
 export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind }) {
   const list = useListState(ownerId, kind);
   const loadList = useAppStore((s) => s.loadList);
@@ -30,9 +30,19 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
   const visibleIds = useMemo(() => sortIds(filterIds(ids, papers, query), papers, sortKey, sortDir), [ids, papers, query, sortKey, sortDir]);
   const win = useWindowedRows(scrollRef, visibleIds.length, ROW_HEIGHT);
 
-  const label = kind === 'refs' ? 'references' : 'citations';
+  const label = kind === 'refs' ? 'references' : kind === 'cites' ? 'citations' : 'related papers';
   const total = list?.total ?? null;
-  const capped = total !== null && ids.length < total;
+  const partial = total !== null && ids.length < total;
+  const statusCount = query
+    ? `${visibleIds.length} of ${ids.length}`
+    : partial
+      ? `${formatCount(ids.length)} of ${formatCount(total)}`
+      : formatCount(ids.length);
+  const statusTitle = partial
+    ? list?.complete
+      ? `${PROVIDER_LABEL[list.provider ?? 's2']} returned ${total} IDs; metadata was available for ${ids.length}`
+      : `${PROVIDER_LABEL[list?.provider ?? 's2']} reports ${total}; showing the first ${ids.length} (raise the limit in settings)`
+    : undefined;
 
   return (
     <div className="paper-list">
@@ -54,10 +64,7 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
           <span className="error-text"><Icon name="alert" size={13} /> {list.error} <button className="linkish" onClick={() => void loadList(ownerId, kind)}>Retry</button></span>
         )}
         {list?.status === 'ready' && (
-          <span>
-            {query ? `${visibleIds.length} of ${ids.length}` : formatCount(ids.length)} {label}
-            {capped && <span title={`${PROVIDER_LABEL[list?.provider ?? 's2']} reports ${total}; showing the first ${ids.length} (raise the limit in settings)`}> · of {formatCount(total)}</span>}
-          </span>
+          <span title={statusTitle}>{statusCount} {label}</span>
         )}
       </div>
       {list?.status === 'ready' && ids.length > 0 && (

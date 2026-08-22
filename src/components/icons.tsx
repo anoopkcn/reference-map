@@ -17,6 +17,8 @@ const PATHS = {
   eye: 'M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
   chevronDown: 'M6 9l6 6 6-6',
   chevronRight: 'M9 6l6 6-6 6',
+  arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
+  arrowRight: 'M5 12h14M13 6l6 6-6 6',
   external: 'M14 4h6v6M20 4l-9 9M18 14v6H4V6h6',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6',
   refresh: 'M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5',

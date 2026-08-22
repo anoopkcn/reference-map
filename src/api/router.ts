@@ -75,7 +75,7 @@ export class Router {
   }
 
   async getList(paper: Paper, kind: ListKind, limit: number, o: EnqueueOptions = {}): Promise<ListResult & { provider: ProviderId }> {
-    const cands = this.candidates(kind, (p) => p.lookupFor(paper) !== null, paper.paperId);
+    const cands = this.candidates(kind, (p) => p.supportsList(kind) && p.lookupFor(paper) !== null, paper.paperId);
     const { value, provider } = await this.runTagged(kind, cands, (p, signal) => p.getList(p.lookupFor(paper)!, kind, limit, { ...o, signal }), o.signal);
     await this.identity.assign(value.papers);
     const seen = new Set<string>();

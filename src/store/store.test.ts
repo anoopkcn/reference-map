@@ -31,10 +31,10 @@ const mk = (pid: ProviderId, key: string, level: DetailLevel = 'list'): Paper =>
   ...(level === 'full' ? { abstract: `Abstract ${key}`, bibtex: pid === 's2' ? `@x{${key}}` : null } : {}),
 });
 const LISTS: Record<string, Record<ListKind, string[]>> = {
-  S: { refs: ['A', 'B'], cites: ['C'] },
-  A: { refs: ['B'], cites: [] },
-  B: { refs: [], cites: [] },
-  C: { refs: [], cites: [] },
+  S: { refs: ['A', 'B'], cites: ['C'], related: ['C', 'B'] },
+  A: { refs: ['B'], cites: [], related: [] },
+  B: { refs: [], cites: [], related: [] },
+  C: { refs: [], cites: [], related: [] },
 };
 
 class FakeProvider implements Provider {
@@ -59,6 +59,9 @@ class FakeProvider implements Provider {
   }
   lookupFor(p: Pick<Paper, 'sources' | 'externalIds'>) {
     return (this.id === 's2' ? p.sources.s2 : p.sources.openalex) ?? (p.externalIds.DOI ? `DOI:${p.externalIds.DOI}` : null);
+  }
+  supportsList(kind: ListKind) {
+    return kind !== 'related' || this.id === 'openalex';
   }
   private async go<T>(label: string, make: () => T): Promise<T> {
     this.calls.push(label);
@@ -184,6 +187,25 @@ describe('store (two providers)', () => {
     expect(p.influentialCitationCount).toBe(1);
     expect(p.openAccessPdf?.url).toBe('https://oa/S.pdf');
     expect(p.bibtex).toBe('@x{S}');
+  });
+
+  it('loads and caches OpenAlex related works without adding graph edges', async () => {
+    const store = make({ settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    const before = store.getState().graph.edgeCount;
+    const related = await store.getState().loadList('doi:10.1/s', 'related');
+    expect(related).toMatchObject({
+      status: 'ready',
+      provider: 'openalex',
+      ids: ['doi:10.1/c', 'doi:10.1/b'],
+      total: 2,
+      complete: true,
+    });
+    expect(s2.calls.some((call) => call.startsWith('related:'))).toBe(false);
+    expect(oa.calls).toContain(`related:DOI:10.1/s:${DEFAULT_SETTINGS.listLimit}`);
+    expect(store.getState().graph.edgeCount).toBe(before);
+    await store.getState().loadList('doi:10.1/s', 'related');
+    expect(oa.calls.filter((call) => call.startsWith('related:')).length).toBe(1);
   });
 
   it('dedupes seeds across id forms and providers', async () => {
@@ -372,5 +394,39 @@ describe('store (two providers)', () => {
     expect(store.getState().settings.listLimit).toBe(1000);
     expect(store.getState().settings.openalexEmail).toBe('me@x.org');
     expect(new UnsupportedLookupError('x', 'openalex').message).toMatch(/OpenAlex/);
+  });
+
+  it('tracks selection history with browser-style back and forward navigation', () => {
+    const store = make({ settings: { autoExpandSeeds: false } });
+    const state = () => store.getState();
+    state().select('doi:10.1/a');
+    state().select('doi:10.1/b');
+    state().select('doi:10.1/c');
+    expect(state()).toMatchObject({
+      selectedId: 'doi:10.1/c',
+      selectionHistory: ['doi:10.1/a', 'doi:10.1/b', 'doi:10.1/c'],
+      selectionIndex: 2,
+    });
+
+    state().selectPrevious();
+    state().selectPrevious();
+    expect(state()).toMatchObject({ selectedId: 'doi:10.1/a', selectionIndex: 0 });
+    state().selectNext();
+    expect(state()).toMatchObject({ selectedId: 'doi:10.1/b', selectionIndex: 1 });
+
+    // A new selection after going back replaces the old forward branch.
+    state().select('doi:10.1/a');
+    expect(state()).toMatchObject({
+      selectedId: 'doi:10.1/a',
+      selectionHistory: ['doi:10.1/a', 'doi:10.1/b', 'doi:10.1/a'],
+      selectionIndex: 2,
+    });
+    state().selectNext();
+    expect(state()).toMatchObject({ selectedId: 'doi:10.1/a', selectionIndex: 2 });
+
+    // Closing and reopening the current selection does not add a duplicate visit.
+    state().select(null);
+    state().select('doi:10.1/a');
+    expect(state().selectionHistory).toEqual(['doi:10.1/a', 'doi:10.1/b', 'doi:10.1/a']);
   });
 });

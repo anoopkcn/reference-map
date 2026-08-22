@@ -230,10 +230,18 @@ button:disabled { cursor: default; opacity: 0.5; }
 .tt-hint { margin-top: 5px; color: var(--text-faint); font-size: 10.5px; }
 .side-panel { flex: none; width: 380px; z-index: 3; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); overflow: hidden; min-height: 0; }
 .side-head { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
-.side-body { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.side-history { display: flex; align-items: center; gap: 2px; }
+.side-body { flex: 1; min-height: 0; padding: 12px; overflow: hidden; display: flex; flex-direction: column; gap: 10px; }
+.side-body > :not(.side-related) { flex: none; }
+.side-related { flex: 1; min-height: 0; margin: 2px -12px -12px; display: flex; flex-direction: column; }
+.side-related h4 { margin: 0; padding: 10px 12px 0; font-size: var(--fs-sm); font-weight: 600; }
+.side-related .paper-list { flex: 1; min-height: 0; margin-top: 8px; border-radius: 0; display: flex; flex-direction: column; }
+.side-related .list-scroll { flex: 1; min-height: 0; max-height: none; }
 .role-chip { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs); font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 @media (max-width: 900px) {
   .side-panel { position: absolute; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 60%; border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2); }
+  .side-body { overflow-y: auto; }
+  .side-related { min-height: 260px; }
 }
 
 /* ---------- provenance chips ---------- */

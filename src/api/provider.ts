@@ -2,7 +2,7 @@ import type { DetailLevel, ListKind, Lookup, Paper, PaperId, ProviderId } from '
 import { describeError, isAbort } from './errors';
 import type { EnqueueOptions, RequestQueue } from './queue';
 
-export type OpKind = 'resolve' | 'detail' | 'refs' | 'cites' | 'batch' | 'search';
+export type OpKind = 'resolve' | 'detail' | 'refs' | 'cites' | 'related' | 'batch' | 'search';
 
 export const PRIORITY = { seed: 3, detail: 2, list: 1, search: 2, batch: 3 } as const;
 
@@ -66,6 +66,8 @@ export interface Provider {
   toNative(lookup: Lookup): string | null;
   /** Native id (or an accepted external id) for a known paper, or null. */
   lookupFor(paper: Pick<Paper, 'sources' | 'externalIds'>): string | null;
+  /** Whether this provider supplies the requested paper-list relationship. */
+  supportsList(kind: ListKind): boolean;
   resolve(lookup: Lookup, level: DetailLevel, options?: EnqueueOptions): Promise<Paper>;
   getPaper(native: string, level: DetailLevel, options?: EnqueueOptions): Promise<Paper>;
   getList(native: string, kind: ListKind, limit: number, options?: EnqueueOptions): Promise<ListResult>;

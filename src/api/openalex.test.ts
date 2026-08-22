@@ -13,6 +13,7 @@ const raw: OAWorkRaw = {
   cited_by_count: 329,
   referenced_works_count: 31,
   referenced_works: ['https://openalex.org/W1', 'https://openalex.org/W2'],
+  related_works: ['https://openalex.org/W3', 'https://openalex.org/W4'],
   type: 'article',
   type_crossref: 'proceedings-article',
   biblio: { volume: null, issue: null, first_page: '84', last_page: '91' },
@@ -149,6 +150,22 @@ describe('OpenAlexClient', () => {
     expect(completed).toEqual(['W150', 'W100']);
     expect(result.ids[0]).toBe('oa:W100');
     expect(result.ids.at(-1)).toBe('oa:W159');
+  });
+
+  it('related: fetches related_works metadata in OpenAlex order', async () => {
+    const f = mockFetch((u) => {
+      if (u.pathname === '/works/W1') {
+        expect(u.searchParams.get('select')).toBe('id,related_works');
+        return { body: { id: 'https://openalex.org/W1', related_works: ['https://openalex.org/W3', 'https://openalex.org/W4'] } };
+      }
+      const wanted = u.searchParams.get('filter')!.replace('openalex:', '').split('|');
+      return { body: { results: wanted.map((id) => w(Number(id.slice(1)))).reverse() } };
+    });
+    const c = new OpenAlexClient({ queue: queue(), fetchFn: f.fn });
+    const r = await c.getList('W1', 'related', 20);
+    expect(r.ids).toEqual(['oa:W3', 'oa:W4']);
+    expect(r.total).toBe(2);
+    expect(r.hasMore).toBe(false);
   });
 
   it('cites: cursor paging sorted by citations, stops at limit, reports total', async () => {

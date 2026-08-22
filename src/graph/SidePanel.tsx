@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Abstract } from '../components/IndexCard';
 import { Icon } from '../components/icons';
 import { PaperActions } from '../components/PaperActions';
+import { PaperList } from '../components/PaperList';
 import { Counts, PaperMeta } from '../components/PaperMeta';
 import { useAppStore } from '../store';
 import { usePaper } from '../store/selectors';
@@ -15,6 +16,10 @@ export function SidePanel() {
   const selectedId = useAppStore((s) => s.selectedId);
   const paper = usePaper(selectedId);
   const select = useAppStore((s) => s.select);
+  const selectPrevious = useAppStore((s) => s.selectPrevious);
+  const selectNext = useAppStore((s) => s.selectNext);
+  const canGoBack = useAppStore((s) => s.selectionIndex > 0);
+  const canGoForward = useAppStore((s) => s.selectionIndex >= 0 && s.selectionIndex < s.selectionHistory.length - 1);
   const ensureDetail = useAppStore((s) => s.ensureDetail);
   const node = useAppStore((s) => (s.graphVersion, selectedId ? s.graph.getNode(selectedId) : undefined));
   // Primitive selectors only: returning a fresh object from a selector would re-render forever.
@@ -43,6 +48,10 @@ export function SidePanel() {
           <span className="role-chip"><Icon name="info" size={12} /> Not in the map</span>
         )}
         <span className="header-spacer" />
+        <nav className="side-history" aria-label="Selection history">
+          <button className="btn ghost icon sm" onClick={selectPrevious} disabled={!canGoBack} aria-label="Previous selected paper" title="Back to previous selected paper"><Icon name="arrowLeft" /></button>
+          <button className="btn ghost icon sm" onClick={selectNext} disabled={!canGoForward} aria-label="Next selected paper" title="Forward to next selected paper"><Icon name="arrowRight" /></button>
+        </nav>
         <button className="btn ghost icon sm" onClick={() => select(null)} aria-label="Close"><Icon name="close" /></button>
       </div>
       <div className="side-body">
@@ -53,6 +62,10 @@ export function SidePanel() {
         )}
         <Abstract paperId={paper.paperId} />
         <PaperActions paper={paper} />
+        <section className="side-related" aria-label="Related papers">
+          <h4>Related papers</h4>
+          <PaperList ownerId={paper.paperId} kind="related" />
+        </section>
       </div>
     </aside>
   );

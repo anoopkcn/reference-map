@@ -59,6 +59,9 @@ class Fake implements Provider {
   lookupFor(p: Pick<Paper, 'sources' | 'externalIds'>) {
     return (this.id === 's2' ? p.sources.s2 : p.sources.openalex) ?? (p.externalIds.DOI ? `DOI:${p.externalIds.DOI}` : null);
   }
+  supportsList(kind: ListKind) {
+    return kind !== 'related' || this.id === 'openalex';
+  }
   /** Like a real client: records latency on success and errors on failure in its own stats. */
   private async go<T>(label: string, make: () => T, o?: EnqueueOptions): Promise<T> {
     this.calls.push(label);
@@ -197,6 +200,15 @@ describe('Router', () => {
     const l2 = await r.getList(oaSeed, 'cites', 10);
     expect(l2.provider).toBe('openalex');
     expect(l2.ids[0]).toBe('doi:10.1/shared'); // same canonical id as the S2 record
+  });
+
+  it('routes related works only to OpenAlex', async () => {
+    const r = make();
+    const seed = { ...mk('s2', 'S', '10.1/s'), sources: { s2: 'S' } };
+    const related = await r.getList(seed, 'related', 10);
+    expect(related.provider).toBe('openalex');
+    expect(s2.calls).toEqual([]);
+    expect(oa.calls).toEqual(['related:DOI:10.1/s']);
   });
 
   it('uses operation-specific latency history when choosing a provider', async () => {

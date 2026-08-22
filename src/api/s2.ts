@@ -65,6 +65,10 @@ export class S2Client implements Provider {
     return null;
   }
 
+  supportsList(kind: ListKind): boolean {
+    return kind !== 'related';
+  }
+
   resolve(lookup: Lookup, level: DetailLevel = 'list', options: EnqueueOptions = {}): Promise<Paper> {
     const native = this.toNative(lookup);
     if (!native) return Promise.reject(new UnsupportedLookupError(lookup, 's2'));
@@ -88,6 +92,7 @@ export class S2Client implements Provider {
 
   /** GET /paper/{id}/references|citations. */
   async getList(native: string, kind: ListKind, limit: number, options: EnqueueOptions = {}): Promise<ListResult> {
+    if (!this.supportsList(kind)) throw new UnsupportedLookupError(`${kind}:${native}`, 's2');
     const lim = Math.max(1, Math.min(S2_LIMITS.list, Math.floor(limit)));
     const path = kind === 'refs' ? 'references' : 'citations';
     const field = kind === 'refs' ? 'citedPaper' : 'citingPaper';

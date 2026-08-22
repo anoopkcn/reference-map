@@ -33,6 +33,7 @@ export interface OAWorkRaw {
   cited_by_count?: number | null;
   referenced_works_count?: number | null;
   referenced_works?: string[] | null;
+  related_works?: string[] | null;
   type?: string | null;
   type_crossref?: string | null;
   biblio?: { volume?: string | null; issue?: string | null; first_page?: string | null; last_page?: string | null } | null;
@@ -239,6 +240,10 @@ export class OpenAlexClient implements Provider {
     return null;
   }
 
+  supportsList(_kind: ListKind): boolean {
+    return true;
+  }
+
   resolve(lookup: Lookup, level: DetailLevel = 'list', options: EnqueueOptions = {}): Promise<Paper> {
     const native = this.toNative(lookup);
     if (!native) return Promise.reject(new UnsupportedLookupError(lookup, 'openalex'));
@@ -262,11 +267,12 @@ export class OpenAlexClient implements Provider {
     }
     const lim = Math.max(1, Math.floor(limit));
     const now = this.now();
-    if (kind === 'refs') {
-      const work = await this.request<OAWorkRaw>(kind, `oa:refids:${W}`, `/works/${W}`, { select: 'id,referenced_works' }, { priority: PRIORITY.list, ...options });
-      const allIds = (work.referenced_works ?? []).map((u) => tail(u).toUpperCase()).filter((w) => W_RE.test(w));
+    if (kind === 'refs' || kind === 'related') {
+      const field = kind === 'refs' ? 'referenced_works' : 'related_works';
+      const work = await this.request<OAWorkRaw>(kind, `oa:${kind}ids:${W}`, `/works/${W}`, { select: `id,${field}` }, { priority: PRIORITY.list, ...options });
+      const allIds = (work[field] ?? []).map((u) => tail(u).toUpperCase()).filter((w) => W_RE.test(w));
       const wanted = allIds.slice(0, lim);
-      const papers = await this.fetchWorksByIds(wanted, 'refs', options);
+      const papers = await this.fetchWorksByIds(wanted, kind, options);
       const byId = new Map(papers.map((p) => [p.sources.openalex!, p]));
       const ordered = wanted.map((w) => byId.get(w)).filter((p): p is Paper => !!p);
       return { ids: ordered.map((p) => p.paperId), papers: ordered, hasMore: allIds.length > wanted.length, total: allIds.length };

@@ -23,6 +23,8 @@ export const useActions = () =>
       searchPapers: s.searchPapers,
       clearSearch: s.clearSearch,
       select: s.select,
+      selectPrevious: s.selectPrevious,
+      selectNext: s.selectNext,
       hover: s.hover,
       setPinned: s.setPinned,
       unpinAll: s.unpinAll,

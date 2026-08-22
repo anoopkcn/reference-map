@@ -73,7 +73,10 @@ export interface Seed {
   error?: string;
 }
 
-export type ListKind = 'refs' | 'cites';
+/** Directed citation lists used to build graph edges. */
+export type GraphListKind = 'refs' | 'cites';
+/** Paper lists available in the UI. Related works are OpenAlex-only and do not create graph edges. */
+export type ListKind = GraphListKind | 'related';
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 export interface ListState {
   ids: PaperId[];

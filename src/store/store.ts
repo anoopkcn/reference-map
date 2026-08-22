@@ -29,6 +29,7 @@ export interface SearchState {
 export interface ListsEntry {
   refs?: ListState;
   cites?: ListState;
+  related?: ListState;
 }
 
 export interface AppState {
@@ -40,6 +41,8 @@ export interface AppState {
   graphVersion: number;
   expanding: Set<PaperId>;
   selectedId: PaperId | null;
+  selectionHistory: PaperId[];
+  selectionIndex: number;
   hoveredId: PaperId | null;
   search: SearchState | null;
   providers: Record<ProviderId, ProviderStatus>;
@@ -56,6 +59,8 @@ export interface AppState {
   searchPapers(query: string): Promise<void>;
   clearSearch(): void;
   select(id: PaperId | null): void;
+  selectPrevious(): void;
+  selectNext(): void;
   /** Select by any id form (legacy sha, DOI, canonical id) once known. */
   selectByKey(key: string): Promise<void>;
   hover(id: PaperId | null): void;
@@ -176,6 +181,8 @@ export function createAppStore(deps: StoreDeps) {
       graphVersion: 0,
       expanding: new Set(),
       selectedId: null,
+      selectionHistory: [],
+      selectionIndex: -1,
       hoveredId: null,
       search: null,
       providers: router.status(),
@@ -488,7 +495,27 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       select(id) {
-        if (get().selectedId !== id) set({ selectedId: id });
+        const state = get();
+        if (state.selectedId === id) return;
+        if (id === null) {
+          set({ selectedId: null });
+          return;
+        }
+        const history = state.selectionHistory.slice(0, state.selectionIndex + 1);
+        if (history.at(-1) !== id) history.push(id);
+        set({ selectedId: id, selectionHistory: history, selectionIndex: history.length - 1 });
+      },
+      selectPrevious() {
+        const state = get();
+        if (state.selectionIndex <= 0) return;
+        const selectionIndex = state.selectionIndex - 1;
+        set({ selectionIndex, selectedId: state.selectionHistory[selectionIndex]! });
+      },
+      selectNext() {
+        const state = get();
+        if (state.selectionIndex < 0 || state.selectionIndex >= state.selectionHistory.length - 1) return;
+        const selectionIndex = state.selectionIndex + 1;
+        set({ selectionIndex, selectedId: state.selectionHistory[selectionIndex]! });
       },
       async selectByKey(key) {
         const k = lookupToAliasKey(key) ?? key;
@@ -638,7 +665,7 @@ async function migrateMemoryCache(source: MemoryCache, target: CacheAdapter): Pr
   await target.putPapers([...source.papers.values()]);
   const listWrites: Promise<void>[] = [];
   for (const [key, list] of source.lists) {
-    const match = /^(.*):(refs|cites):(s2|openalex)$/.exec(key);
+    const match = /^(.*):(refs|cites|related):(s2|openalex)$/.exec(key);
     if (match) listWrites.push(target.putList(match[1]!, match[2]! as ListKind, list));
   }
   await Promise.all(listWrites);
@@ -647,7 +674,7 @@ async function migrateMemoryCache(source: MemoryCache, target: CacheAdapter): Pr
 
 function listTotal(p: Paper | undefined, kind: ListKind, fallback: number): number {
   if (!p) return fallback;
-  const n = kind === 'refs' ? p.referenceCount : p.citationCount;
+  const n = kind === 'refs' ? p.referenceCount : kind === 'cites' ? p.citationCount : fallback;
   return Math.max(n, fallback);
 }
 

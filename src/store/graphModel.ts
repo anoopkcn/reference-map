@@ -1,5 +1,5 @@
 import { nodeLabel } from '../lib/format';
-import { NodeRole, type ListKind, type Paper, type PaperId } from '../types';
+import { NodeRole, type GraphListKind, type Paper, type PaperId } from '../types';
 
 export const R_MIN = 2.5;
 export const R_MAX = 14;
@@ -32,7 +32,7 @@ export interface GraphDiff {
 
 const freshDiff = (): GraphDiff => ({ reset: false, newNodes: [], parents: [], newEdges: [], radiiChanged: false });
 
-export type CachedListGetter = (id: PaperId, kind: ListKind) => readonly PaperId[] | undefined;
+export type CachedListGetter = (id: PaperId, kind: GraphListKind) => readonly PaperId[] | undefined;
 
 /**
  * Pure graph data structure. Edges are directed `citing → cited`.
@@ -166,7 +166,7 @@ export class GraphModel {
       this.version++;
     }
     const newIds: PaperId[] = [];
-    const process = (ids: readonly PaperId[] | null | undefined, kind: ListKind) => {
+    const process = (ids: readonly PaperId[] | null | undefined, kind: GraphListKind) => {
       if (!ids) return;
       const fresh: PaperId[] = [];
       for (const id of ids) {
