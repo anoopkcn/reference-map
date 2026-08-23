@@ -3,7 +3,7 @@ import { zoom as d3zoom, zoomIdentity, type D3ZoomEvent, type ZoomBehavior } fro
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { appStore, useAppStore } from '../store';
 import { GraphBridge } from './bridge';
-import { createFrame } from './frame';
+import { createFrame, roleIsVisible } from './frame';
 import { fitTransform, frameBBox, hitTestNode } from './hitTest';
 import { drawFrame, readTheme, type GraphTheme, type ViewTransform } from './renderer';
 import { GraphTooltip } from './GraphTooltip';
@@ -18,7 +18,7 @@ const DBLCLICK_MS = 350;
 const DRAG_THRESHOLD = 3;
 
 /** Canvas renderer: positions from the worker bridge, zoom/pan via d3-zoom, pointer interactions in world space. */
-export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<GraphControls | null>; themeKey: string }) {
+export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { controlsRef: RefObject<GraphControls | null>; themeKey: string; visibleRoleMask: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -37,6 +37,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
   const animRef = useRef(0);
   const labelMode = useAppStore((s) => s.settings.labelMode);
   const labelModeRef = useRef(labelMode);
+  const visibleRoleMaskRef = useRef(visibleRoleMask);
   const [tipIdx, setTipIdx] = useState(-1);
   const tipIdxRef = useRef(-1);
 
@@ -70,7 +71,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
         fc.neighbors = set;
       } else fc.neighbors = null;
     }
-    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current });
+    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current });
   };
   const markDirty = () => {
     if (activeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(draw);
@@ -80,6 +81,17 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     labelModeRef.current = labelMode;
     markDirty();
   }, [labelMode]);
+
+  useEffect(() => {
+    visibleRoleMaskRef.current = visibleRoleMask;
+    const idx = tipIdxRef.current;
+    if (idx >= 0 && !roleIsVisible(visibleRoleMask, frameRef.current.role[idx]!)) {
+      tipIdxRef.current = -1;
+      setTipIdx(-1);
+      appStore.getState().hover(null);
+    }
+    markDirty();
+  }, [visibleRoleMask]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -127,7 +139,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
     };
 
     const fit = (animate = true) => {
-      const b = frameBBox(frame);
+      const b = frameBBox(frame, visibleRoleMaskRef.current);
       const { w, h } = sizeRef.current;
       if (!b || !w || !h) return;
       applyTransform(fitTransform(b, w, h), animate);
@@ -245,7 +257,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
           const src = ev.type === 'touchstart' ? (ev as TouchEvent).touches[0] : ev;
           if (!src) return true;
           const [px, py] = pointer(src, canvas);
-          return hitTestNode(frame, viewRef.current, px, py) < 0;
+          return hitTestNode(frame, viewRef.current, px, py, visibleRoleMaskRef.current) < 0;
         }
         return true;
       })
@@ -294,7 +306,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       hoverRaf = 0;
       if (!hoverPt) return;
       const [sx, sy] = hoverPt;
-      setHover(hitTestNode(frame, viewRef.current, sx, sy), sx, sy);
+      setHover(hitTestNode(frame, viewRef.current, sx, sy, visibleRoleMaskRef.current), sx, sy);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -302,7 +314,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
       const [sx, sy] = localPoint(e);
       downPt = [sx, sy];
       moved = false;
-      downHit = hitTestNode(frame, viewRef.current, sx, sy);
+      downHit = hitTestNode(frame, viewRef.current, sx, sy, visibleRoleMaskRef.current);
       if (downHit >= 0) {
         dragging = downHit;
         canvas.setPointerCapture(e.pointerId);
@@ -370,7 +382,7 @@ export function GraphCanvas({ controlsRef, themeKey }: { controlsRef: RefObject<
 
     const onDblClick = (e: MouseEvent) => {
       const r = rectRef.current ?? canvas.getBoundingClientRect();
-      const idx = hitTestNode(frame, viewRef.current, e.clientX - r.left, e.clientY - r.top);
+      const idx = hitTestNode(frame, viewRef.current, e.clientX - r.left, e.clientY - r.top, visibleRoleMaskRef.current);
       const id = idx >= 0 ? frame.ids[idx] : undefined;
       if (!id) return;
       e.preventDefault();

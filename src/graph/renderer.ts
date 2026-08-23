@@ -1,5 +1,5 @@
 import type { LabelMode } from '../types';
-import { FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, type FrameData } from './frame';
+import { FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, roleIsVisible, type FrameData } from './frame';
 
 export interface ViewTransform {
   k: number;
@@ -59,6 +59,8 @@ export interface DrawOptions {
   focus: number;
   /** idx of the node currently described by the DOM tooltip (its canvas label is skipped), or -1 */
   tooltipIdx: number;
+  /** Bit mask of node roles to render. */
+  visibleRoleMask: number;
 }
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -83,7 +85,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   const x1 = (width - view.x) / k + margin;
   const y1 = (height - view.y) / k + margin;
   const pos = f.pos;
-  const focus = o.focus;
+  const visible = (index: number) => roleIsVisible(o.visibleRoleMask, f.role[index]!);
+  const focus = o.focus >= 0 && visible(o.focus) ? o.focus : -1;
   const dim = focus >= 0;
 
   // ---- edges ----
@@ -94,6 +97,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   for (let i = 0; i < f.m; i++) {
     const a = f.edgeSrc[i]!;
     const b = f.edgeDst[i]!;
+    if (!visible(a) || !visible(b)) continue;
     if (dim && (a === focus || b === focus)) continue;
     const ax = pos[2 * a]!;
     const ay = pos[2 * a + 1]!;
@@ -114,13 +118,14 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
     for (let i = 0; i < f.m; i++) {
       const a = f.edgeSrc[i]!;
       const b = f.edgeDst[i]!;
+      if (!visible(a) || !visible(b)) continue;
       if (a !== focus && b !== focus) continue;
       ctx.moveTo(pos[2 * a]!, pos[2 * a + 1]!);
       ctx.lineTo(pos[2 * b]!, pos[2 * b + 1]!);
     }
     ctx.stroke();
     // arrowheads on highlighted edges (direction: citing → cited)
-    drawArrows(ctx, f, focus, theme.edgeHi, k);
+    drawArrows(ctx, f, focus, theme.edgeHi, k, o.visibleRoleMask);
   }
 
   // ---- nodes, batched per role ----
@@ -132,6 +137,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
       ctx.beginPath();
       let any = false;
       for (let i = 0; i < f.n; i++) {
+        if (!visible(i)) continue;
         if (f.role[i] !== role) continue;
         const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
         if ((pass === 0) !== isDim) continue;
@@ -154,6 +160,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   // ---- rings: seeds, expanded, pinned, focus ----
   ctx.lineWidth = 1.5 / k;
   for (let i = 0; i < f.n; i++) {
+    if (!visible(i)) continue;
     const fl = f.flags[i]!;
     const x = pos[2 * i]!;
     const y = pos[2 * i + 1]!;
@@ -192,8 +199,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
       ctx.setLineDash([]);
     }
   }
-  if (f.selected >= 0) ring(ctx, pos, f.r, f.selected, theme.accent, 2.5 / k, 4 / k);
-  if (f.hovered >= 0 && f.hovered !== f.selected) ring(ctx, pos, f.r, f.hovered, theme.accent, 1.5 / k, 3 / k);
+  if (f.selected >= 0 && visible(f.selected)) ring(ctx, pos, f.r, f.selected, theme.accent, 2.5 / k, 4 / k);
+  if (f.hovered >= 0 && f.hovered !== f.selected && visible(f.hovered)) ring(ctx, pos, f.r, f.hovered, theme.accent, 1.5 / k, 3 / k);
 
   // ---- labels ----
   const px = 11 / k;
@@ -212,6 +219,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   // Label neighbours of the focus node only when there are few of them (or when zoomed in).
   const labelNeighbors = !!neighbors && (neighbors.size <= 14 || k >= 2.2);
   for (let i = 0; i < f.n; i++) {
+    if (!visible(i)) continue;
     const x = pos[2 * i]!;
     const y = pos[2 * i + 1]!;
     if (x < x0 || x > x1 || y < y0 || y > y1) continue;
@@ -241,7 +249,7 @@ function ring(ctx: CanvasRenderingContext2D, pos: Float32Array, rr: Float32Array
   ctx.stroke();
 }
 
-function drawArrows(ctx: CanvasRenderingContext2D, f: FrameData, focus: number, color: string, k: number): void {
+function drawArrows(ctx: CanvasRenderingContext2D, f: FrameData, focus: number, color: string, k: number, visibleRoleMask: number): void {
   const pos = f.pos;
   const size = 6 / k;
   ctx.fillStyle = color;
@@ -249,6 +257,7 @@ function drawArrows(ctx: CanvasRenderingContext2D, f: FrameData, focus: number, 
   for (let i = 0; i < f.m; i++) {
     const a = f.edgeSrc[i]!;
     const b = f.edgeDst[i]!;
+    if (!roleIsVisible(visibleRoleMask, f.role[a]!) || !roleIsVisible(visibleRoleMask, f.role[b]!)) continue;
     if (a !== focus && b !== focus) continue;
     const ax = pos[2 * a]!;
     const ay = pos[2 * a + 1]!;

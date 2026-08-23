@@ -25,6 +25,13 @@ export const FLAG_PINNED = 2;
 export const FLAG_EXPANDED = 4;
 export const FLAG_EXPANDING = 8;
 
+/** All graph roles (Seed, Cited, Citing, Both, and the internal Isolated role). */
+export const ALL_ROLE_MASK = 0b1_1111;
+
+export function roleIsVisible(mask: number, role: number): boolean {
+  return (mask & (1 << role)) !== 0;
+}
+
 export function createFrame(): FrameData {
   return {
     n: 0,

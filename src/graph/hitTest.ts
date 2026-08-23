@@ -1,8 +1,8 @@
-import type { FrameData } from './frame';
+import { ALL_ROLE_MASK, roleIsVisible, type FrameData } from './frame';
 import type { ViewTransform } from './renderer';
 
 /** Nearest node under screen point (sx, sy) with a small slack; -1 if none. Linear scan — fast enough for thousands of nodes. */
-export function hitTestNode(f: FrameData, view: ViewTransform, sx: number, sy: number): number {
+export function hitTestNode(f: FrameData, view: ViewTransform, sx: number, sy: number, visibleRoleMask = ALL_ROLE_MASK): number {
   const gx = (sx - view.x) / view.k;
   const gy = (sy - view.y) / view.k;
   const slack = 4 / view.k;
@@ -10,6 +10,7 @@ export function hitTestNode(f: FrameData, view: ViewTransform, sx: number, sy: n
   let bestD = Infinity;
   const pos = f.pos;
   for (let i = 0; i < f.n; i++) {
+    if (!roleIsVisible(visibleRoleMask, f.role[i]!)) continue;
     const dx = pos[2 * i]! - gx;
     const dy = pos[2 * i + 1]! - gy;
     const rr = f.r[i]! + slack;
@@ -29,13 +30,14 @@ export interface BBox {
   maxY: number;
 }
 
-export function frameBBox(f: FrameData): BBox | null {
+export function frameBBox(f: FrameData, visibleRoleMask = ALL_ROLE_MASK): BBox | null {
   if (f.n === 0) return null;
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (let i = 0; i < f.n; i++) {
+    if (!roleIsVisible(visibleRoleMask, f.role[i]!)) continue;
     const x = f.pos[2 * i]!;
     const y = f.pos[2 * i + 1]!;
     const r = f.r[i]!;
