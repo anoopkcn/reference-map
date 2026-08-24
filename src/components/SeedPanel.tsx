@@ -19,7 +19,7 @@ export function SeedPanel() {
             double-click any node (or use <em>Expand</em>) to grow the map from there.
           </p>
           <p className="muted small">
-            Examples: <code>10.18653/v1/N18-3011</code> · <code>arXiv:1706.03762</code> · <code>attention is all you need</code>
+            Examples: <code>arXiv:1706.03762</code> · <code>attention is all you need</code>
           </p>
         </div>
       ) : (
