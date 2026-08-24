@@ -263,6 +263,19 @@ describe('Router', () => {
     expect(res2[1]).toBeNull();
   });
 
+  it('getBatch hedges to the next provider when the primary is slow, then aborts the straggler', async () => {
+    const r = make(4000);
+    s2.delayMs = 10_000;
+    const p = r.getBatch(['DOI:10.1/a', 'DOI:10.1/b'], 'list');
+    await vi.advanceTimersByTimeAsync(3999);
+    expect(oa.calls).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    const res = await p;
+    expect(res.map((x) => x?.sources.openalex !== undefined)).toEqual([true, true]);
+    expect(oa.calls).toEqual(['batch:DOI:10.1/a,DOI:10.1/b']);
+    expect(s2.aborted).toBe(1); // the slow batch is released once every lookup is served
+  });
+
   it('status reports per-provider health', async () => {
     const r = make();
     s2.fail = new NetworkError();

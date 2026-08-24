@@ -134,7 +134,7 @@ describe('store (two providers)', () => {
     oa = new FakeProvider('openalex');
   });
 
-  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS> } = {}) => {
+  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[] } = {}) => {
     const c = over.cache ?? cache;
     const identity = new Identity(c);
     const store = createAppStore({
@@ -143,7 +143,8 @@ describe('store (two providers)', () => {
       cache: c,
       settings: { ...DEFAULT_SETTINGS, ...over.settings },
       toastMs: 0,
-      now: () => 10,
+      now: over.now ?? (() => 10),
+      seedRetryDelays: over.seedRetryDelays ?? [],
     });
     return store;
   };
@@ -334,6 +335,59 @@ describe('store (two providers)', () => {
     await third.getState().addSeeds(['DOI:10.1/zz']);
     expect(s2.calls).toEqual([]);
     expect(third.getState().seeds[0]!.status).toBe('error');
+  });
+
+  it('serves a stale cached paper instantly and refreshes it in the background', async () => {
+    const first = make({ settings: { autoExpandSeeds: false } });
+    await first.getState().addSeeds(['DOI:10.1/s']);
+    await settle();
+    s2.calls = [];
+    oa.calls = [];
+    // 8 days later the paper cache (7-day TTL) is stale, but the seed still appears without waiting
+    const later = make({ settings: { autoExpandSeeds: false }, now: () => 10 + 8 * 86_400_000 });
+    await later.getState().addSeeds(['DOI:10.1/s']);
+    expect(later.getState().seeds[0]).toMatchObject({ status: 'ready', paperId: 'doi:10.1/s' });
+    await settle();
+    expect(s2.calls).toContain('batch:doi:10.1/s'); // background revalidation
+  });
+
+  it('serves a stale cached list instantly and refreshes it in the background', async () => {
+    const first = make();
+    await first.getState().addSeeds(['DOI:10.1/s']);
+    await settle();
+    s2.calls = [];
+    oa.calls = [];
+    // 4 days later the lists (3-day TTL) are stale but the papers (7-day TTL) are not
+    const later = make({ now: () => 10 + 4 * 86_400_000 });
+    await later.getState().addSeeds(['DOI:10.1/s']);
+    await settle();
+    const refs = later.getState().lists.get('doi:10.1/s')!.refs!;
+    expect(refs.status).toBe('ready');
+    expect(refs.ids).toEqual(['doi:10.1/a', 'doi:10.1/b']);
+    expect(s2.calls.some((c) => c.startsWith('refs:'))).toBe(true); // background revalidation
+  });
+
+  it('reports provider-listed papers whose metadata could not be fetched instead of dropping them silently', async () => {
+    await cache.putList('doi:10.1/s', 'refs', { ids: ['doi:10.1/a', 'doi:10.1/zz'], limit: 100, complete: true, fetchedAt: 10, provider: 's2', total: 2 });
+    const store = make({ settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await settle();
+    const refs = await store.getState().loadList('doi:10.1/s', 'refs');
+    expect(refs).toMatchObject({ status: 'ready', ids: ['doi:10.1/a'], missingCount: 1 });
+  });
+
+  it('automatically retries a seed that failed transiently once the provider recovers', async () => {
+    s2.fail = new NetworkError('down', 's2');
+    oa.fail = new NetworkError('down', 'openalex');
+    const store = make({ seedRetryDelays: [30] });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await settle();
+    expect(store.getState().seeds[0]).toMatchObject({ status: 'error', retryable: true });
+    s2.fail = null;
+    oa.fail = null;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await settle();
+    expect(store.getState().seeds[0]).toMatchObject({ status: 'ready', paperId: 'doi:10.1/s' });
   });
 
   it('forced source mode never calls the other provider and reports unsupported ids', async () => {

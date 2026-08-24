@@ -14,6 +14,8 @@ export interface S2ClientOptions {
   fetchFn?: typeof fetch;
   baseUrl?: string;
   now?: () => number;
+  /** Whether the machine believes it is online (default: navigator.onLine, true when unknown). */
+  onLine?: () => boolean;
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -29,6 +31,7 @@ export class S2Client implements Provider {
   private fetchFn: typeof fetch;
   private baseUrl: string;
   private now: () => number;
+  private onLine: () => boolean;
 
   constructor(opts: S2ClientOptions) {
     this.queue = opts.queue;
@@ -36,6 +39,7 @@ export class S2Client implements Provider {
     this.fetchFn = opts.fetchFn ?? ((input, init) => fetch(input, init));
     this.baseUrl = opts.baseUrl ?? S2_API;
     this.now = opts.now ?? (() => Date.now());
+    this.onLine = opts.onLine ?? (() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
     this.stats = new ProviderStats(this.now);
   }
 
@@ -179,7 +183,12 @@ export class S2Client implements Provider {
           res = await this.fetchFn(this.baseUrl + path, { ...init, headers, signal });
         } catch (e) {
           if (signal.aborted) throw new AbortedError();
-          const err = new NetworkError(e instanceof Error ? e.message : 'Network error', 's2');
+          // The public S2 pool omits CORS headers on 429/5xx responses, so the browser reports
+          // them as opaque network failures. While online, treat one as a rate limit — pausing
+          // the queue instead of hammering a closed door — and let the Router fail over.
+          const err = this.onLine()
+            ? new RateLimitedError(null, 'Rate limited', undefined, 's2')
+            : new NetworkError(e instanceof Error ? e.message : 'Network error', 's2');
           this.stats.record(op, false, this.now() - t0, err);
           throw err;
         }

@@ -71,6 +71,8 @@ export interface Seed {
   paperId: PaperId | null;
   status: SeedStatus;
   error?: string;
+  /** The error looked transient (rate limit, network, 5xx) — worth retrying automatically. */
+  retryable?: boolean;
 }
 
 /** Directed citation lists used to build graph edges. */
@@ -90,6 +92,8 @@ export interface ListState {
   loadedLimit: number;
   /** The provider reported that this is the complete list, not a capped prefix. */
   complete: boolean;
+  /** Entries the provider listed but whose metadata could not be fetched (shown as "N unavailable"). */
+  missingCount?: number;
 }
 
 export const NodeRole = { Seed: 0, Cited: 1, Citing: 2, Both: 3, Isolated: 4 } as const;

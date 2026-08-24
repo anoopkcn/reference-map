@@ -122,48 +122,54 @@ export class Router {
     }
   }
 
-  /** Aligned with input. Each lookup goes to the best capable provider; misses get one more try elsewhere. */
+  /**
+   * Aligned with input. Each lookup goes to the best capable provider; misses get one more try elsewhere.
+   * Hedged: when a pass has not answered within the soft timeout, the next-best provider starts on the
+   * still-missing lookups while the slow pass keeps running — the first answer per lookup wins.
+   */
   async getBatch(lookups: readonly Lookup[], level: DetailLevel, o: EnqueueOptions = {}): Promise<(Paper | null)[]> {
     const results: (Paper | null)[] = new Array(lookups.length).fill(null);
     if (lookups.length === 0) return results;
-    const sorted = this.sortedProviders('batch');
-    const remaining = new Set(lookups.map((_, i) => i));
     const tried = lookups.map(() => new Set<ProviderId>());
-    while (remaining.size) {
+    const outstanding: Promise<void>[] = [];
+    const controllers: AbortController[] = [];
+    const unresolved = () => lookups.map((_, i) => i).filter((i) => results[i] === null);
+
+    while (!o.signal?.aborted) {
+      const sorted = this.sortedProviders('batch');
       const groups = new Map<Provider, number[]>();
-      for (const i of [...remaining]) {
+      for (const i of unresolved()) {
         const p = sorted.find((pr) => !tried[i]!.has(pr.id) && pr.toNative(lookups[i]!) !== null);
-        if (!p) {
-          remaining.delete(i);
-          continue;
-        }
+        if (!p) continue;
         tried[i]!.add(p.id);
         const g = groups.get(p) ?? [];
         g.push(i);
         groups.set(p, g);
       }
       if (groups.size === 0) break;
-      await Promise.all(
-        [...groups].map(async ([p, idxs]) => {
-          try {
-            const res = await p.getBatch(
-              idxs.map((i) => lookups[i]!),
-              level,
-              o,
-            );
+      const ctrl = linkAbort(o.signal);
+      controllers.push(ctrl);
+      const pass = [...groups].map(([p, idxs]) =>
+        this.attempt('batch', p, (pp, signal) => pp.getBatch(idxs.map((i) => lookups[i]!), level, { ...o, signal }), ctrl.signal)
+          .then((res) => {
             res.forEach((r, j) => {
-              if (r) {
-                results[idxs[j]!] = r;
-                remaining.delete(idxs[j]!);
-              }
+              const i = idxs[j]!;
+              if (r && results[i] === null) results[i] = r;
             });
-          } catch (e) {
-            if (isAbort(e)) throw e;
-            // provider recorded the failure in its stats; remaining lookups get another provider next pass
-          }
-        }),
+          })
+          .catch(() => {
+            // provider recorded the failure in its stats; missing lookups get another provider next pass
+          }),
       );
+      outstanding.push(...pass);
+      const slowest = Math.max(...[...groups.keys()].map((p) => p.stats.ewma('batch')));
+      const soft = Math.min(this.maxHedgeMs, Math.max(this.softTimeoutMs, 2 * slowest));
+      await settledOrTimeout(Promise.all(pass), soft);
     }
+    // No further passes possible: a slow pass may still deliver lookups only it can serve.
+    if (unresolved().length > 0) await Promise.all(outstanding);
+    for (const ctrl of controllers) ctrl.abort(); // release attempts made redundant by a faster provider
+    if (o.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     await this.identity.assign(results.filter((p): p is Paper => !!p));
     return results;
   }
@@ -304,6 +310,18 @@ function linkAbort(outer?: AbortSignal): AbortController {
     else outer.addEventListener('abort', () => ctrl.abort(), { once: true });
   }
   return ctrl;
+}
+
+/** Resolves when `p` settles (either way) or after `ms`, whichever comes first. */
+function settledOrTimeout(p: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(t);
+      resolve();
+    };
+    p.then(done, done);
+  });
 }
 
 function raceTimeout<T>(p: Promise<T>, ms: number): Promise<Outcome<T>> {

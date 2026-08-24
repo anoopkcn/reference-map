@@ -31,6 +31,7 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
   const win = useWindowedRows(scrollRef, visibleIds.length, ROW_HEIGHT);
 
   const label = kind === 'refs' ? 'references' : kind === 'cites' ? 'citations' : 'related papers';
+  const missing = list?.missingCount ?? 0;
   const total = list?.total ?? null;
   const partial = total !== null && ids.length < total;
   const statusCount = query
@@ -64,10 +65,15 @@ export function PaperList({ ownerId, kind }: { ownerId: PaperId; kind: ListKind 
           <span className="error-text"><Icon name="alert" size={13} /> {list.error} <button className="linkish" onClick={() => void loadList(ownerId, kind)}>Retry</button></span>
         )}
         {list?.status === 'ready' && (
-          <span title={statusTitle}>{statusCount} {label}</span>
+          <span title={statusTitle}>
+            {statusCount} {label}
+            {missing > 0 && (
+              <> · <span className="error-text">{missing} unavailable</span> <button className="linkish" onClick={() => void loadList(ownerId, kind, { force: true })}>Retry</button></>
+            )}
+          </span>
         )}
       </div>
-      {list?.status === 'ready' && ids.length > 0 && (
+      {(list?.status === 'ready' || list?.status === 'loading') && ids.length > 0 && (
         <div className="list-scroll" ref={scrollRef}>
           <div style={{ height: win.padTop }} />
           {visibleIds.slice(win.start, win.end).map((id) => (

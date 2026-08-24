@@ -49,8 +49,13 @@ export function isFresh(fetchedAt: number, ttl: number, now = Date.now()): boole
   return now - fetchedAt < ttl;
 }
 
+/** The paper carries at least this much detail, regardless of age (stale-while-revalidate reads). */
+export function paperAtLevel(p: Paper | undefined, level: DetailLevel): p is Paper {
+  return !!p && DETAIL_RANK[p.detailLevel] >= DETAIL_RANK[level];
+}
+
 export function paperSatisfies(p: Paper | undefined, level: DetailLevel, now = Date.now()): p is Paper {
-  return !!p && DETAIL_RANK[p.detailLevel] >= DETAIL_RANK[level] && isFresh(p.fetchedAt, TTL.paper, now);
+  return paperAtLevel(p, level) && isFresh(p.fetchedAt, TTL.paper, now);
 }
 
 export function listKey(id: PaperId, kind: ListKind, provider: ProviderId): string {

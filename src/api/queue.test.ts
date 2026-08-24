@@ -124,6 +124,26 @@ describe('RequestQueue', () => {
     rnd.mockRestore();
   });
 
+  it('rate-limited retries use their own budget, independent of maxRetries', async () => {
+    const q = new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, baseBackoffMs: 100 });
+    let attempts = 0;
+    const p = q.enqueue('k', async () => {
+      attempts++;
+      if (attempts <= 2) throw new RateLimitedError(50);
+      return 'ok';
+    });
+    await flush(200);
+    expect(await p).toBe('ok');
+    expect(attempts).toBe(3);
+    // 5xx / network errors still give up immediately at maxRetries 0
+    const p2 = q.enqueue('n', async () => {
+      throw new NetworkError();
+    });
+    p2.catch(() => {});
+    await flush(1000);
+    await expect(p2).rejects.toBeInstanceOf(NetworkError);
+  });
+
   it('does not retry 404 / 400', async () => {
     const q = new RequestQueue({ concurrency: 1, minIntervalMs: 0 });
     let n = 0;

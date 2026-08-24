@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NotFoundError, RateLimitedError } from './errors';
+import { NetworkError, NotFoundError, RateLimitedError } from './errors';
 import { hasUnicodeReplacement, mergePaper, normalizePaper, repairUnicodeMetadata } from './normalize';
 import { RequestQueue } from './queue';
 import { S2Client, parseRetryAfter } from './s2';
@@ -159,9 +159,19 @@ describe('S2Client', () => {
 
   it('getPaper maps 404 / 429', async () => {
     const f = mockFetch((u) => (u.includes('missing') ? { status: 404, body: { error: 'x' } } : { status: 429, headers: { 'retry-after': '1' } }));
-    const c = new S2Client({ queue: new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0 }), fetchFn: f.fn });
+    const c = new S2Client({ queue: new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 }), fetchFn: f.fn });
     await expect(c.getPaper('missing')).rejects.toBeInstanceOf(NotFoundError);
     await expect(c.getPaper('limited')).rejects.toBeInstanceOf(RateLimitedError);
+  });
+
+  it('treats an opaque fetch failure as a rate limit while online, as a network error while offline', async () => {
+    const failing = (() => Promise.reject(new TypeError('Failed to fetch'))) as typeof fetch;
+    const q = () => new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 });
+    // The public pool omits CORS headers on 429s, so the browser reports them as fetch failures.
+    const online = new S2Client({ queue: q(), fetchFn: failing, onLine: () => true });
+    await expect(online.getPaper('abc')).rejects.toBeInstanceOf(RateLimitedError);
+    const offline = new S2Client({ queue: q(), fetchFn: failing, onLine: () => false });
+    await expect(offline.getPaper('abc')).rejects.toBeInstanceOf(NetworkError);
   });
 
   it('getList drops null citedPaper rows, dedupes and reports hasMore', async () => {

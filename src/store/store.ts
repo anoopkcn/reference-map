@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import { isFresh, MemoryCache, paperSatisfies, PROVIDERS, TTL, type CacheAdapter, type CachedList } from '../api/cache';
-import { describeError, isAbort, NotFoundError } from '../api/errors';
+import { isFresh, MemoryCache, paperAtLevel, PROVIDERS, TTL, type CacheAdapter, type CachedList } from '../api/cache';
+import { ApiError, describeError, isAbort, NetworkError, NotFoundError, RateLimitedError } from '../api/errors';
 import { hasUnicodeReplacement, mergePaper } from '../api/normalize';
 import { PRIORITY } from '../api/provider';
 import { AUTH_QUEUE, UNAUTH_QUEUE } from '../api/queue';
@@ -68,7 +68,7 @@ export interface AppState {
   unpinAll(): void;
   updateSettings(patch: Partial<Settings>): void;
   clearCache(): Promise<void>;
-  pushToast(text: string, kind?: Toast['kind']): void;
+  pushToast(text: string, kind?: Toast['kind'], ms?: number): void;
   dismissToast(id: number): void;
 }
 
@@ -80,6 +80,8 @@ export interface StoreDeps {
   now?: () => number;
   /** Toast auto-dismiss (ms); 0 disables. */
   toastMs?: number;
+  /** Delays before automatically retrying a seed that failed transiently; [] disables. */
+  seedRetryDelays?: readonly number[];
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -99,9 +101,14 @@ export function createAppStore(deps: StoreDeps) {
   let cacheReady: Promise<void> = Promise.resolve();
   const now = deps.now ?? (() => Date.now());
   const toastMs = deps.toastMs ?? 3500;
+  const seedRetryDelays = deps.seedRetryDelays ?? [20_000, 60_000];
   const listPromises = new Map<string, SharedListRequest>();
   const expandPromises = new Map<PaperId, Promise<void>>();
   const expandControllers = new Map<PaperId, AbortController>();
+  /** Keys of stale entries currently being refreshed in the background. */
+  const revalidating = new Set<string>();
+  const seedRetryAttempts = new Map<string, number>();
+  const seedRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let searchCtrl: AbortController | null = null;
   let toastSeq = 0;
   let settingsTimer: ReturnType<typeof setTimeout> | null = null;
@@ -139,30 +146,92 @@ export function createAppStore(deps: StoreDeps) {
 
     const bumpGraph = (): void => set({ graphVersion: get().graph.version });
 
-    /** Make sure every id has a Paper in the store: memory → cache → batch fetch. */
-    const ensurePapers = async (ids: readonly PaperId[]): Promise<void> => {
+    /** Refresh stale list-level metadata in the background (never blocks the caller). */
+    const revalidatePapers = (ids: readonly PaperId[]): void => {
+      const wanted = ids.filter((id) => !revalidating.has(`paper:${id}`));
+      if (wanted.length === 0) return;
+      for (const id of wanted) revalidating.add(`paper:${id}`);
+      void router
+        .getBatch(wanted, 'list', { priority: PRIORITY.revalidate })
+        .then((papers) => upsertPapers(papers.filter((p): p is Paper => !!p)))
+        .catch(() => {})
+        .finally(() => {
+          for (const id of wanted) revalidating.delete(`paper:${id}`);
+        });
+    };
+
+    /** Refresh a stale full-detail record in the background. */
+    const revalidateDetail = (id: PaperId): void => {
+      if (revalidating.has(`full:${id}`)) return;
+      const paper = get().papers.get(id);
+      if (!paper) return;
+      revalidating.add(`full:${id}`);
+      void router
+        .getPaper(paper, 'full', { priority: PRIORITY.revalidate })
+        .then((fresh) => upsertPapers([{ ...fresh, paperId: id }]))
+        .catch(() => {})
+        .finally(() => revalidating.delete(`full:${id}`));
+    };
+
+    /**
+     * Make sure every id has a Paper in the store: memory → cache → batch fetch.
+     * A stale cached paper is served immediately and refreshed in the background.
+     * With `network: false`, cache misses are simply left out (placeholder reads).
+     */
+    const ensurePapers = async (ids: readonly PaperId[], o: { network?: boolean } = {}): Promise<void> => {
       const missing = ids.filter((id) => !get().papers.has(id));
       if (missing.length === 0) return;
       const fromCache = await cache.getPapers(missing);
-      const fresh: Paper[] = [];
+      const cachedHits: Paper[] = [];
+      const staleIds: PaperId[] = [];
       const stillMissing: PaperId[] = [];
       for (const id of missing) {
         const p = fromCache.get(id);
-        if (paperSatisfies(p, 'list', now())) fresh.push(p);
-        else stillMissing.push(id);
+        if (paperAtLevel(p, 'list')) {
+          cachedHits.push(p);
+          if (!isFresh(p.fetchedAt, TTL.paper, now())) staleIds.push(id);
+        } else stillMissing.push(id);
       }
-      upsertPapers(fresh);
-      if (fresh.some(hasUnicodeReplacement)) {
-        const repaired = await router.repairCorruptedMetadata(fresh, { priority: PRIORITY.list });
+      upsertPapers(cachedHits);
+      if (cachedHits.some(hasUnicodeReplacement)) {
+        const repaired = await router.repairCorruptedMetadata(cachedHits, { priority: PRIORITY.list });
         upsertPapers(repaired);
       }
-      if (stillMissing.length) {
+      if (staleIds.length) revalidatePapers(staleIds);
+      if (stillMissing.length && o.network !== false) {
         const fetched = await router.getBatch(stillMissing, 'list', { priority: PRIORITY.list });
         upsertPapers(fetched.filter((p): p is Paper => !!p));
       }
     };
 
-    /** Resolve one lookup from the alias table + paper cache. */
+    /** Re-fetch a stale cached list in the background and swap it in when it lands. */
+    const revalidateList = (id: PaperId, kind: ListKind, limit: number): void => {
+      const key = `${kind}:${id}`;
+      if (revalidating.has(key)) return;
+      const paper = get().papers.get(id);
+      if (!paper) return;
+      revalidating.add(key);
+      void router
+        .getList(paper, kind, limit, { priority: PRIORITY.revalidate })
+        .then((res) => {
+          upsertPapers(res.papers);
+          void cache.putList(id, kind, { ids: res.ids, limit, complete: !res.hasMore, fetchedAt: now(), provider: res.provider, total: res.total });
+          const st: ListState = {
+            ids: res.ids,
+            status: 'ready',
+            total: res.total ?? listTotal(get().papers.get(id), kind, res.ids.length),
+            provider: res.provider,
+            loadedLimit: limit,
+            complete: !res.hasMore,
+            missingCount: 0,
+          };
+          commitListState(get, setList, id, kind, st);
+        })
+        .catch(() => {})
+        .finally(() => revalidating.delete(key));
+    };
+
+    /** Resolve one lookup from the alias table + paper cache; stale hits are served and refreshed in the background. */
     const resolveFromCache = async (lookup: Lookup): Promise<Paper | 'notfound' | null> => {
       const key = lookupToAliasKey(lookup);
       if (!key) return null;
@@ -170,11 +239,29 @@ export function createAppStore(deps: StoreDeps) {
       if (!entry) return null;
       if (entry.paperId === null) return isFresh(entry.fetchedAt, TTL.negativeLookup, now()) ? 'notfound' : null;
       const p = get().papers.get(entry.paperId) ?? (await cache.getPaper(entry.paperId));
-      return paperSatisfies(p, 'list', now()) ? p : null;
+      if (!paperAtLevel(p, 'list')) return null;
+      if (!isFresh(p.fetchedAt, TTL.paper, now())) revalidatePapers([p.paperId]);
+      return p;
     };
 
     const resolveFromNetwork = async (lookup: Lookup): Promise<Paper> => {
       return router.resolve(lookup, 'list', { priority: PRIORITY.seed });
+    };
+
+    /** One quiet retry ladder per seed that failed transiently — the rate limit usually clears within a minute. */
+    const scheduleSeedRetry = (lookup: Lookup): void => {
+      const key = lookupKey(lookup);
+      const attempt = seedRetryAttempts.get(key) ?? 0;
+      if (attempt >= seedRetryDelays.length || seedRetryTimers.has(key)) return;
+      const timer = setTimeout(() => {
+        seedRetryTimers.delete(key);
+        seedRetryAttempts.set(key, attempt + 1);
+        const seed = get().seeds.find((s) => lookupKey(s.lookup) === key);
+        if (!seed || seed.status !== 'error' || !seed.retryable) return;
+        get().removeSeed(seed.lookup);
+        void get().addSeeds([seed.lookup]);
+      }, seedRetryDelays[attempt]!);
+      seedRetryTimers.set(key, timer);
     };
 
     return {
@@ -290,6 +377,7 @@ export function createAppStore(deps: StoreDeps) {
               paperId: null,
               status: 'error',
               error: outcome.error ? describeError(outcome.error) : 'Not found on Semantic Scholar or OpenAlex',
+              retryable: outcome.error ? isTransient(outcome.error) : false,
             });
           }
         }
@@ -298,6 +386,10 @@ export function createAppStore(deps: StoreDeps) {
         state.graph.addSeeds(graphEntries, nextPapers);
         set({ papers: nextPapers, seeds, graphVersion: state.graph.version });
         void cache.putPapers(changed);
+        for (const [lookup, outcome] of outcomes) {
+          if (outcome.paper) seedRetryAttempts.delete(lookupKey(lookup));
+          else if (outcome.error && isTransient(outcome.error)) scheduleSeedRetry(lookup);
+        }
         if (duplicate) get().pushToast('Already in the map');
         if (get().settings.autoExpandSeeds) for (const [id] of graphEntries) void get().expandNode(id);
       },
@@ -337,8 +429,10 @@ export function createAppStore(deps: StoreDeps) {
           try {
             const paper = get().papers.get(id);
             if (!paper) throw new Error('Paper not loaded');
-            const cached = opts.force ? undefined : await bestCachedList(cache, id, kind, limit, now());
+            const candidates = opts.force ? [] : await cachedListCandidates(cache, id, kind);
+            const cached = candidates.filter((l) => l.complete || l.limit >= limit).sort(rankCachedLists)[0];
             if (cached) {
+              // A stale cached list is served immediately and refreshed in the background.
               await ensurePapers(cached.ids);
               const ids = cached.ids.filter((x) => get().papers.has(x));
               const st: ListState = {
@@ -348,8 +442,23 @@ export function createAppStore(deps: StoreDeps) {
                 provider: cached.provider,
                 loadedLimit: cached.limit,
                 complete: cached.complete,
+                missingCount: cached.ids.length - ids.length,
               };
-              return commitListState(get, setList, id, kind, st);
+              const committed = commitListState(get, setList, id, kind, st);
+              if (!isFresh(cached.fetchedAt, TTL.list, now())) revalidateList(id, kind, limit);
+              return committed;
+            }
+            // A smaller cached prefix can't satisfy the request, but it beats an empty spinner.
+            const partial = candidates.sort(rankCachedLists)[0];
+            if (partial && partial.ids.length && !get().lists.get(id)?.[kind]?.ids.length) {
+              void ensurePapers(partial.ids, { network: false })
+                .then(() => {
+                  const cur = get().lists.get(id)?.[kind];
+                  if (cur?.status !== 'loading') return; // the real fetch already answered
+                  const ids = partial.ids.filter((x) => get().papers.has(x));
+                  if (ids.length) setList(id, kind, { ...cur, ids });
+                })
+                .catch(() => {});
             }
             const res = await router.getList(paper, kind, limit, { priority: PRIORITY.list, signal: controller.signal });
             upsertPapers(res.papers);
@@ -361,6 +470,7 @@ export function createAppStore(deps: StoreDeps) {
               provider: res.provider,
               loadedLimit: limit,
               complete: !res.hasMore,
+              missingCount: 0,
             };
             return commitListState(get, setList, id, kind, st);
           } catch (e) {
@@ -455,11 +565,15 @@ export function createAppStore(deps: StoreDeps) {
       async ensureDetail(id) {
         const p = get().papers.get(id);
         if (!p) return undefined;
-        if (p.detailLevel === 'full') return p;
+        if (p.detailLevel === 'full') {
+          if (!isFresh(p.fetchedAt, TTL.paper, now())) revalidateDetail(id);
+          return p;
+        }
         try {
           const cached = await cache.getPaper(id);
-          if (paperSatisfies(cached, 'full', now())) {
+          if (paperAtLevel(cached, 'full')) {
             upsertPapers([cached]);
+            if (!isFresh(cached.fetchedAt, TTL.paper, now())) revalidateDetail(id);
             return get().papers.get(id);
           }
           const fetched = await router.getPaper(p, 'full', { priority: PRIORITY.detail });
@@ -555,10 +669,10 @@ export function createAppStore(deps: StoreDeps) {
         get().pushToast('Cache cleared');
       },
 
-      pushToast(text, kind = 'info') {
+      pushToast(text, kind = 'info', ms = toastMs) {
         const id = ++toastSeq;
         set({ toasts: [...get().toasts, { id, text, kind }] });
-        if (toastMs > 0) setTimeout(() => get().dismissToast(id), toastMs);
+        if (ms > 0) setTimeout(() => get().dismissToast(id), ms);
       },
       dismissToast(id) {
         const t = get().toasts;
@@ -567,9 +681,22 @@ export function createAppStore(deps: StoreDeps) {
     };
   });
 
+  let s2WasPaused = false;
+  let s2PauseEvents = 0;
+  let apiKeyHintShown = false;
   router.onStatus((s) => {
     const cur = store.getState().providers;
     if (JSON.stringify(cur) !== JSON.stringify(s)) store.setState({ providers: s });
+    // Repeated anonymous rate-limiting has a one-line cure the user may not know about.
+    const paused = (s.s2?.pausedUntil ?? null) !== null;
+    if (paused && !s2WasPaused) {
+      s2PauseEvents++;
+      if (s2PauseEvents >= 2 && !apiKeyHintShown && !store.getState().settings.apiKey) {
+        apiKeyHintShown = true;
+        store.getState().pushToast('Semantic Scholar keeps rate-limiting anonymous requests — a free S2 API key in Settings makes loading faster and more reliable', 'info', 8000);
+      }
+    }
+    s2WasPaused = paused;
   });
 
   /** Adopt a persistent cache without delaying React mount or losing memory writes. */
@@ -587,6 +714,11 @@ export function createAppStore(deps: StoreDeps) {
   };
 
   return Object.assign(store, { prepareCache });
+}
+
+/** Worth retrying automatically: the provider was unreachable or overloaded, not a definitive miss. */
+function isTransient(e: unknown): boolean {
+  return e instanceof RateLimitedError || e instanceof NetworkError || (e instanceof ApiError && e.status >= 500);
 }
 
 function listStateSatisfies(state: ListState | undefined, limit: number): state is ListState {
@@ -658,11 +790,13 @@ function commitListState(
   return preferred;
 }
 
-async function bestCachedList(cache: CacheAdapter, id: PaperId, kind: ListKind, limit: number, now: number): Promise<CachedList | undefined> {
-  const candidates = await Promise.all(PROVIDERS.map((provider) => cache.getList(id, kind, provider)));
-  return candidates
-    .filter((list): list is CachedList => !!list && isFresh(list.fetchedAt, TTL.list, now) && (list.complete || list.limit >= limit))
-    .sort((a, b) => Number(b.complete) - Number(a.complete) || b.limit - a.limit || b.fetchedAt - a.fetchedAt)[0];
+async function cachedListCandidates(cache: CacheAdapter, id: PaperId, kind: ListKind): Promise<CachedList[]> {
+  const all = await Promise.all(PROVIDERS.map((provider) => cache.getList(id, kind, provider)));
+  return all.filter((list): list is CachedList => !!list);
+}
+
+function rankCachedLists(a: CachedList, b: CachedList): number {
+  return Number(b.complete) - Number(a.complete) || b.limit - a.limit || b.fetchedAt - a.fetchedAt;
 }
 
 async function migrateMemoryCache(source: MemoryCache, target: CacheAdapter): Promise<void> {

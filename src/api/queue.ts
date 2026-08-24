@@ -5,7 +5,10 @@ export interface QueueOptions {
   concurrency: number;
   /** Min spacing between request starts (ms). */
   minIntervalMs: number;
+  /** Retries for 5xx / network errors. Kept low: the Router falls back to another provider faster than a backoff ladder recovers. */
   maxRetries: number;
+  /** Retries for 429s, counted separately — a paused queue usually succeeds on the next attempt. */
+  maxRateLimitRetries: number;
   baseBackoffMs: number;
   maxBackoffMs: number;
 }
@@ -29,6 +32,7 @@ interface Job<T = unknown> {
   priority: number;
   seq: number;
   attempt: number;
+  rlAttempt: number;
   notBefore: number;
   refs: number;
   ctrl: AbortController;
@@ -57,7 +61,7 @@ export class RequestQueue {
   private listeners = new Set<(s: QueueStatus) => void>();
 
   constructor(opts: Partial<QueueOptions> = {}) {
-    this.opts = { ...UNAUTH_QUEUE, maxRetries: 5, baseBackoffMs: 1000, maxBackoffMs: 60_000, ...opts };
+    this.opts = { ...UNAUTH_QUEUE, maxRetries: 2, maxRateLimitRetries: 5, baseBackoffMs: 1000, maxBackoffMs: 8000, ...opts };
   }
 
   configure(patch: Partial<QueueOptions>): void {
@@ -105,6 +109,7 @@ export class RequestQueue {
       priority: options.priority ?? 0,
       seq: this.seq++,
       attempt: 0,
+      rlAttempt: 0,
       notBefore: 0,
       refs: 1,
       ctrl: new AbortController(),
@@ -223,30 +228,35 @@ export class RequestQueue {
       return;
     }
     if (err instanceof RateLimitedError) {
-      const wait = err.retryAfterMs ?? this.backoff(job.attempt);
+      const wait = err.retryAfterMs ?? this.backoff(job.rlAttempt);
       this.pausedUntil = Math.max(this.pausedUntil, now + wait);
-      this.requeue(job, err, 0);
-      return;
-    }
-    if ((err instanceof S2Error && err.status >= 500) || err instanceof NetworkError) {
-      this.requeue(job, err, this.backoff(job.attempt));
-      return;
-    }
-    this.inflight.delete(job.key);
-    job.reject(err);
-    this.pump();
-  }
-
-  private requeue(job: Job, err: unknown, delay: number): void {
-    job.attempt++;
-    if (job.attempt > this.opts.maxRetries) {
-      this.inflight.delete(job.key);
-      job.reject(err);
+      job.rlAttempt++;
+      if (job.rlAttempt > this.opts.maxRateLimitRetries) {
+        this.giveUp(job, err);
+        return;
+      }
+      job.notBefore = 0; // the global pause does the waiting
+      this.insert(job);
       this.pump();
       return;
     }
-    job.notBefore = Date.now() + delay;
-    this.insert(job);
+    if ((err instanceof S2Error && err.status >= 500) || err instanceof NetworkError) {
+      job.attempt++;
+      if (job.attempt > this.opts.maxRetries) {
+        this.giveUp(job, err);
+        return;
+      }
+      job.notBefore = now + this.backoff(job.attempt - 1);
+      this.insert(job);
+      this.pump();
+      return;
+    }
+    this.giveUp(job, err);
+  }
+
+  private giveUp(job: Job, err: unknown): void {
+    this.inflight.delete(job.key);
+    job.reject(err);
     this.pump();
   }
 

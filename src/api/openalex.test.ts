@@ -98,7 +98,7 @@ describe('OpenAlexClient', () => {
 
   it('getPaper builds the URL with select and mailto; maps 404 / 429', async () => {
     const f = mockFetch((u) => (u.pathname.includes('missing') ? { status: 404 } : u.pathname.includes('limited') ? { status: 429, headers: { 'retry-after': '2' } } : { body: raw }));
-    const c = new OpenAlexClient({ queue: new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0 }), fetchFn: f.fn, getMailto: () => 'me@example.org' });
+    const c = new OpenAlexClient({ queue: new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 }), fetchFn: f.fn, getMailto: () => 'me@example.org' });
     const p = await c.getPaper('doi:10.18653/v1/n18-3011', 'full');
     expect(p.paperId).toBe('oa:W2801930304');
     expect(f.calls[0]!.pathname).toBe('/works/doi:10.18653/v1/n18-3011');

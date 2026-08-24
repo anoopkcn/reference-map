@@ -4,7 +4,7 @@ import type { EnqueueOptions, RequestQueue } from './queue';
 
 export type OpKind = 'resolve' | 'detail' | 'refs' | 'cites' | 'related' | 'batch' | 'search';
 
-export const PRIORITY = { seed: 3, detail: 2, list: 1, search: 2, batch: 3 } as const;
+export const PRIORITY = { seed: 3, detail: 2, list: 1, search: 2, batch: 3, revalidate: 0 } as const;
 
 export interface ListResult {
   /** Ids in provider order (provisional until canonicalised by the Router). */
