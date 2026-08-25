@@ -3,7 +3,7 @@ import { copyText } from '../lib/clipboard';
 import { generateBibtex } from '../lib/bibtex';
 import { doiUrl, paperUrl, paperUrlLabel, pdfUrl, plainCitation } from '../lib/format';
 import { useAppStore } from '../store';
-import { useIsExpanding, useIsSeed } from '../store/selectors';
+import { useIsExpanding } from '../store/selectors';
 import type { Paper } from '../types';
 import { Icon } from './icons';
 
@@ -21,11 +21,8 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const ensureDetail = useAppStore((s) => s.ensureDetail);
   const pushToast = useAppStore((s) => s.pushToast);
   const expandNode = useAppStore((s) => s.expandNode);
-  const addSeeds = useAppStore((s) => s.addSeeds);
-  const graphHas = useAppStore((s) => (s.graphVersion, s.graph.hasNode(paper.paperId)));
   const expanded = useAppStore((s) => (s.graphVersion, s.graph.getNode(paper.paperId)?.expanded ?? false));
   const expanding = useIsExpanding(paper.paperId);
-  const isSeed = useIsSeed(paper.paperId);
   const [busy, setBusy] = useState<string | null>(null);
 
   const copy = useCallback(
@@ -83,15 +80,10 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
           className={`${size} ${expanded ? 'active' : ''}`}
           onClick={() => void expandNode(paper.paperId)}
           disabled={expanding}
-          title={expanded ? 'Connections are loaded in the map' : graphHas ? 'Load this paper’s connections into the map' : 'Add to the map and load its connections'}
+          title={expanded ? 'Connections are loaded in the map' : 'Load this paper’s connections into the map and pin it to the sidebar'}
         >
           {expanding ? <span className="spinner" /> : <Icon name="graph" />}
           {!compact && (expanded ? ' Expanded' : expanding ? ' Expanding…' : ' Expand')}
-        </button>
-      )}
-      {!isSeed && (
-        <button className={size} onClick={() => void addSeeds([paper.paperId])} title="Add as a seed paper">
-          <Icon name="plus" />{!compact && ' Seed'}
         </button>
       )}
       {onRemove && (

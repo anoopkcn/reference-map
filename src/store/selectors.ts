@@ -9,7 +9,6 @@ export const useSettings = () => useAppStore((s) => s.settings);
 export const useProviderStatus = () => useAppStore((s) => s.providers);
 export const useSelectedId = () => useAppStore((s) => s.selectedId);
 export const useIsExpanding = (id: PaperId) => useAppStore((s) => s.expanding.has(id));
-export const useIsSeed = (id: PaperId) => useAppStore((s) => s.seeds.some((x) => x.paperId === id));
 export const useActions = () =>
   useAppStore(
     useShallow((s) => ({
