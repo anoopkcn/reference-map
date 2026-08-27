@@ -77,7 +77,7 @@ export interface Seed {
 
 /** Directed citation lists used to build graph edges. */
 export type GraphListKind = 'refs' | 'cites';
-/** Paper lists available in the UI. Related works are OpenAlex-only and do not create graph edges. */
+/** Paper lists available in the UI. Related works come from OpenAlex (and optionally S2 recommendations) and do not create graph edges. */
 export type ListKind = GraphListKind | 'related';
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error';
 export interface ListState {
@@ -119,6 +119,8 @@ export interface Settings {
   /** Contact e-mail for OpenAlex's polite pool (optional). */
   openalexEmail: string;
   sourceMode: SourceMode;
+  /** Let Semantic Scholar's recommendations serve the related-papers list alongside OpenAlex. */
+  s2RelatedPapers: boolean;
   /** refs/cites fetched per paper (≤ 1000). */
   listLimit: number;
   /** New nodes added per direction per expansion. */
@@ -135,6 +137,7 @@ export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   openalexEmail: '',
   sourceMode: 'auto',
+  s2RelatedPapers: false,
   listLimit: 100,
   graphExpandLimit: 100,
   autoExpandSeeds: true,
@@ -146,5 +149,6 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const S2_WEB = 'https://www.semanticscholar.org';
 export const S2_API = 'https://api.semanticscholar.org/graph/v1';
+export const S2_RECOMMENDATIONS_API = 'https://api.semanticscholar.org/recommendations/v1';
 export const OPENALEX_WEB = 'https://openalex.org';
 export const OPENALEX_API = 'https://api.openalex.org';

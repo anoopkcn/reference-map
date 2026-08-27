@@ -11,7 +11,11 @@ export const startupCache = new MemoryCache();
 export const s2Queue = new RequestQueue();
 export const oaQueue = new RequestQueue(OA_QUEUE);
 export const identity = new Identity(startupCache);
-export const s2 = new S2Client({ queue: s2Queue, getApiKey: () => appStore.getState().settings.apiKey });
+export const s2 = new S2Client({
+  queue: s2Queue,
+  getApiKey: () => appStore.getState().settings.apiKey,
+  relatedEnabled: () => appStore.getState().settings.s2RelatedPapers,
+});
 export const openalex = new OpenAlexClient({ queue: oaQueue, getMailto: () => appStore.getState().settings.openalexEmail });
 export const router = new Router({ providers: [s2, openalex], identity, getMode: () => appStore.getState().settings.sourceMode });
 

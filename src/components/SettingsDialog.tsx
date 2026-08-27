@@ -64,6 +64,17 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           </span>
         </div>
 
+        <div className="field">
+          <label className="field check">
+            <input type="checkbox" checked={settings.s2RelatedPapers} onChange={(e) => update({ s2RelatedPapers: e.target.checked })} />
+            <span>Get related papers from Semantic Scholar too</span>
+          </label>
+          <span className="faint small">
+            Related papers normally come from OpenAlex. When enabled, Semantic Scholar's recommendations (as on its website's “Related” tab) can serve
+            the list as well — whichever source answers first.
+          </span>
+        </div>
+
         <label className="field">
           <span>Semantic Scholar API key <span className="faint">(optional)</span></span>
           <div className="row">

@@ -36,3 +36,4 @@ Thumbs.db
 
 # the original Obsidian plugin kept here for reference (has its own git repo)
 obsidian-reference-map/
+env

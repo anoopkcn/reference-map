@@ -22,5 +22,5 @@ export const DETAIL_FIELDS = [...LIST_FIELDS, 'abstract', 'citationStyles'] as c
 export const LIST_FIELDS_PARAM = LIST_FIELDS.join(',');
 export const DETAIL_FIELDS_PARAM = DETAIL_FIELDS.join(',');
 
-/** Hard limits of the Semantic Scholar Graph API. */
-export const S2_LIMITS = { list: 1000, search: 100, batch: 500 } as const;
+/** Hard limits of the Semantic Scholar Graph and Recommendations APIs. */
+export const S2_LIMITS = { list: 1000, search: 100, batch: 500, recommendations: 500 } as const;

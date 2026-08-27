@@ -1,4 +1,4 @@
-import { S2_API, type DetailLevel, type ListKind, type Lookup, type Paper, type PaperId } from '../types';
+import { S2_API, S2_RECOMMENDATIONS_API, type DetailLevel, type ListKind, type Lookup, type Paper, type PaperId } from '../types';
 import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError, isAbort } from './errors';
 import { DETAIL_FIELDS_PARAM, LIST_FIELDS_PARAM, S2_LIMITS } from './fields';
 import { normalizePaper, type S2PaperRaw } from './normalize';
@@ -21,6 +21,9 @@ export interface S2ClientOptions {
    * can never use it; there getBatch decomposes into per-id GETs (default: true outside browsers).
    */
   canBatchPost?: boolean;
+  /** Whether related-papers requests (Recommendations API) are enabled (default: true; the app gates this on a setting). */
+  relatedEnabled?: () => boolean;
+  recommendationsUrl?: string;
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -38,6 +41,8 @@ export class S2Client implements Provider {
   private now: () => number;
   private onLine: () => boolean;
   private canBatchPost: boolean;
+  private relatedEnabled: () => boolean;
+  private recommendationsUrl: string;
 
   constructor(opts: S2ClientOptions) {
     this.queue = opts.queue;
@@ -47,6 +52,8 @@ export class S2Client implements Provider {
     this.now = opts.now ?? (() => Date.now());
     this.onLine = opts.onLine ?? (() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
     this.canBatchPost = opts.canBatchPost ?? typeof window === 'undefined';
+    this.relatedEnabled = opts.relatedEnabled ?? (() => true);
+    this.recommendationsUrl = opts.recommendationsUrl ?? S2_RECOMMENDATIONS_API;
     this.stats = new ProviderStats(this.now);
   }
 
@@ -77,7 +84,7 @@ export class S2Client implements Provider {
   }
 
   supportsList(kind: ListKind): boolean {
-    return kind !== 'related';
+    return kind !== 'related' || this.relatedEnabled();
   }
 
   supportsBatch(): boolean {
@@ -105,9 +112,10 @@ export class S2Client implements Provider {
     return p;
   }
 
-  /** GET /paper/{id}/references|citations. */
+  /** GET /paper/{id}/references|citations, or the Recommendations API for related papers. */
   async getList(native: string, kind: ListKind, limit: number, options: EnqueueOptions = {}): Promise<ListResult> {
     if (!this.supportsList(kind)) throw new UnsupportedLookupError(`${kind}:${native}`, 's2');
+    if (kind === 'related') return this.getRelated(native, limit, options);
     const lim = Math.max(1, Math.min(S2_LIMITS.list, Math.floor(limit)));
     const path = kind === 'refs' ? 'references' : 'citations';
     const field = kind === 'refs' ? 'citedPaper' : 'citingPaper';
@@ -130,6 +138,33 @@ export class S2Client implements Provider {
       papers.push(p);
     }
     return { ids, papers, hasMore: raw.next !== undefined && raw.next !== null, total: null };
+  }
+
+  /** GET recommendations/v1/papers/forpaper/{id} — embedding-based related papers (accepts the same ids as the Graph API). */
+  private async getRelated(native: string, limit: number, options: EnqueueOptions): Promise<ListResult> {
+    const lim = Math.max(1, Math.min(S2_LIMITS.recommendations, Math.floor(limit)));
+    const raw = await this.request<{ recommendedPapers?: (S2PaperRaw | null)[] }>(
+      'related',
+      `related:${native.toLowerCase()}:${lim}`,
+      `/papers/forpaper/${encodeURIComponent(native)}?limit=${lim}&fields=${LIST_FIELDS_PARAM}`,
+      undefined,
+      { priority: PRIORITY.list, ...options },
+      this.recommendationsUrl,
+    );
+    const now = this.now();
+    const rows = raw.recommendedPapers ?? [];
+    const ids: PaperId[] = [];
+    const papers: Paper[] = [];
+    const seen = new Set<PaperId>();
+    for (const row of rows) {
+      const p = normalizePaper(row, 'list', now);
+      if (!p || seen.has(p.paperId)) continue;
+      seen.add(p.paperId);
+      ids.push(p.paperId);
+      papers.push(p);
+    }
+    // No pagination or total: a full page means a larger limit could return more.
+    return { ids, papers, hasMore: rows.length >= lim && lim < S2_LIMITS.recommendations, total: null };
   }
 
   /**
@@ -197,7 +232,7 @@ export class S2Client implements Provider {
     return { papers, total: raw.total ?? papers.length };
   }
 
-  private request<T>(op: OpKind, key: string, path: string, init: RequestInit | undefined, options: EnqueueOptions): Promise<T> {
+  private request<T>(op: OpKind, key: string, path: string, init: RequestInit | undefined, options: EnqueueOptions, base = this.baseUrl): Promise<T> {
     return this.queue.enqueue<T>(
       key,
       async (signal) => {
@@ -208,7 +243,7 @@ export class S2Client implements Provider {
         const t0 = this.now();
         let res: Response;
         try {
-          res = await this.fetchFn(this.baseUrl + path, { ...init, headers, signal });
+          res = await this.fetchFn(base + path, { ...init, headers, signal });
         } catch (e) {
           if (signal.aborted) throw new AbortedError();
           // The public S2 pool omits CORS headers on 429/5xx responses, so the browser reports

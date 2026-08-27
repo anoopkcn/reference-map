@@ -20,6 +20,7 @@ export function sanitizeSettings(input: Partial<Settings> | null | undefined): S
     apiKey: typeof s.apiKey === 'string' ? s.apiKey.trim() : DEFAULT_SETTINGS.apiKey,
     openalexEmail: typeof s.openalexEmail === 'string' ? s.openalexEmail.trim() : DEFAULT_SETTINGS.openalexEmail,
     sourceMode: oneOf(s.sourceMode, ['auto', 's2', 'openalex'] as const, DEFAULT_SETTINGS.sourceMode),
+    s2RelatedPapers: typeof s.s2RelatedPapers === 'boolean' ? s.s2RelatedPapers : DEFAULT_SETTINGS.s2RelatedPapers,
     listLimit: clampInt(s.listLimit, 50, S2_LIMITS.list, DEFAULT_SETTINGS.listLimit),
     graphExpandLimit: clampInt(s.graphExpandLimit, 10, S2_LIMITS.list, DEFAULT_SETTINGS.graphExpandLimit),
     autoExpandSeeds: typeof s.autoExpandSeeds === 'boolean' ? s.autoExpandSeeds : DEFAULT_SETTINGS.autoExpandSeeds,

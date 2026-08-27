@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NetworkError, NotFoundError, RateLimitedError } from './errors';
+import { NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError } from './errors';
 import { hasUnicodeReplacement, mergePaper, normalizePaper, repairUnicodeMetadata } from './normalize';
 import { RequestQueue } from './queue';
 import { S2Client, parseRetryAfter } from './s2';
@@ -191,6 +191,34 @@ describe('S2Client', () => {
     const r2 = await c.getList('abc', 'cites', 5000);
     expect(f.calls[1]!.url).toContain('/paper/abc/citations?limit=1000&');
     expect(r2.ids).toEqual([]); // citingPaper field missing in mock → all dropped
+  });
+
+  it('getList related uses the Recommendations API and reports hasMore only on a full page below the cap', async () => {
+    const f = mockFetch(() => ({
+      body: { recommendedPapers: [raw, { paperId: null, title: 'Unresolved' }, raw, { ...raw, paperId: 'def' }] },
+    }));
+    const c = new S2Client({ queue: queue(), fetchFn: f.fn });
+    expect(c.supportsList('related')).toBe(true);
+    const r = await c.getList('DOI:10.1/x', 'related', 4);
+    expect(f.calls[0]!.url).toBe(
+      'https://api.semanticscholar.org/recommendations/v1/papers/forpaper/DOI%3A10.1%2Fx?limit=4&fields=paperId,title,year,authors,venue,journal,citationCount,referenceCount,influentialCitationCount,externalIds,isOpenAccess,openAccessPdf,publicationTypes,publicationDate',
+    );
+    expect(r.ids).toEqual(['s2:abc', 's2:def']); // nulls dropped, dupes collapsed
+    expect(r.total).toBeNull();
+    expect(r.hasMore).toBe(true); // 4 raw rows for limit 4: a larger limit could return more
+    const partial = await c.getList('abc', 'related', 10);
+    expect(partial.hasMore).toBe(false); // short page: that's all of them
+    await c.getList('abc', 'related', 5000);
+    expect(f.calls[2]!.url).toContain('limit=500&'); // clamped to the API cap
+  });
+
+  it('getList related is refused when disabled via relatedEnabled', async () => {
+    const f = mockFetch(() => ({ body: { recommendedPapers: [] } }));
+    const c = new S2Client({ queue: queue(), fetchFn: f.fn, relatedEnabled: () => false });
+    expect(c.supportsList('related')).toBe(false);
+    expect(c.supportsList('refs')).toBe(true);
+    await expect(c.getList('abc', 'related', 10)).rejects.toBeInstanceOf(UnsupportedLookupError);
+    expect(f.calls.length).toBe(0);
   });
 
   it('getBatch posts ids and aligns results', async () => {
