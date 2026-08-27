@@ -137,6 +137,8 @@ export interface Settings {
   zoteroUserId: string;
   /** Zotero username, display only. */
   zoteroUsername: string;
+  /** URL of a running zotero-bridge (scripts/zotero-bridge.mjs) so a HOSTED copy can reach the local Zotero app. */
+  zoteroLocalUrl: string;
   /** Remembered save-target collection ('' = library root). */
   zoteroCollectionKey: string;
   /** Display name of the save target; '' = not chosen yet (first save asks). */
@@ -158,6 +160,7 @@ export const DEFAULT_SETTINGS: Settings = {
   zoteroApiKey: '',
   zoteroUserId: '',
   zoteroUsername: '',
+  zoteroLocalUrl: '',
   zoteroCollectionKey: '',
   zoteroCollectionName: '',
 };

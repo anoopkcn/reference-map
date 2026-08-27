@@ -138,7 +138,7 @@ describe('store (two providers)', () => {
     oa = new FakeProvider('openalex');
   });
 
-  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike; zoteroConnector?: ZoteroConnectorLike } = {}) => {
+  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike; zoteroConnector?: ZoteroConnectorLike; zoteroLocalSupported?: () => boolean } = {}) => {
     const c = over.cache ?? cache;
     const identity = new Identity(c);
     const store = createAppStore({
@@ -152,6 +152,7 @@ describe('store (two providers)', () => {
       zotero: over.zotero,
       zoteroLocal: over.zoteroLocal,
       zoteroConnector: over.zoteroConnector,
+      zoteroLocalSupported: over.zoteroLocalSupported,
     });
     return store;
   };
@@ -745,11 +746,32 @@ describe('store (two providers)', () => {
   it('zoteroProbeLocal reports whether the Zotero app answers', async () => {
     const local = new FakeZotero();
     const store = make({ zoteroLocal: local });
+    expect(store.getState().zotero.localSupported).toBe(true);
     await store.getState().zoteroProbeLocal();
-    expect(store.getState().zotero.localAvailable).toBe(true);
+    expect(store.getState().zotero).toMatchObject({ localAvailable: true, localProbed: true });
     local.failSearch = new Error('closed');
     await store.getState().zoteroProbeLocal();
     expect(store.getState().zotero.localAvailable).toBe(false);
+    // Static deployments construct no local client: local features report unsupported.
+    expect(make({}).getState().zotero.localSupported).toBe(false);
+  });
+
+  it('a configured bridge URL enables local support at runtime', async () => {
+    const local = new FakeZotero();
+    // Mirrors production wiring: support follows the settings value (undefined until the store exists).
+    let ref: ReturnType<typeof make> | undefined;
+    const store = make({ zoteroLocal: local, zoteroConnector: new FakeConnector(), zoteroLocalSupported: () => !!ref?.getState().settings.zoteroLocalUrl });
+    ref = store;
+    expect(store.getState().zotero.localSupported).toBe(false);
+    await store.getState().zoteroProbeLocal();
+    expect(local.calls).toEqual([]); // unsupported → no request
+    store.getState().updateSettings({ zoteroLocalUrl: 'http://127.0.0.1:23120/' });
+    expect(store.getState().settings.zoteroLocalUrl).toBe('http://127.0.0.1:23120'); // trailing slash trimmed
+    await settle();
+    expect(store.getState().zotero).toMatchObject({ localSupported: true, localAvailable: true, localProbed: true });
+    store.getState().updateSettings({ zoteroLocalUrl: '' });
+    await settle();
+    expect(store.getState().zotero).toMatchObject({ localSupported: false, localAvailable: false });
   });
 
   it('previewZoteroSearch shows local results as you type, leaving the web part idle', async () => {

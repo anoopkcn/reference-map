@@ -43,6 +43,16 @@ Deploy `dist/` to any static host (GitHub Pages, Netlify, Vercel, S3...). The bu
 
 *Automatic* (default) routes each request by capability and health; *Semantic Scholar only* and *OpenAlex only* force one source. arXiv, ACL, CorpusId and URL identifiers can only be looked up on Semantic Scholar. Internally papers get a provider-neutral id (`doi:...`, `arxiv:...`, `pmid:...`, `mag:...`, or `s2:...` / `oa:W...` when nothing better exists); these ids also appear in shareable URLs. Upgrading from an earlier version resets the local cache once.
 
+## Zotero integration
+
+Search your Zotero library as you type (its own section above the web results), seed maps from your papers, and save papers you discover back into Zotero — with the PDF attached when one is available. Three ways to connect:
+
+- **Local, running the app yourself** (`npm run dev`): zero setup beyond enabling *Allow other applications on this computer to communicate with Zotero* in Zotero's Settings → Advanced. Keyless, instant, sees un-synced changes; saves land in the collection currently selected in Zotero.
+- **Hosted copy + local bridge**: Zotero's local server (rightly) refuses requests from web pages, so a hosted copy needs a tiny relay. Run `node scripts/zotero-bridge.mjs https://your-app-origin` (binds to 127.0.0.1, forwards only the origins you list) and put `http://127.0.0.1:23120` into Settings → *Local Zotero bridge URL*. Chrome/Firefox only — Safari blocks https pages from calling localhost.
+- **zotero.org API key** (works anywhere, including hosted with nothing local): create a key with library read + write at [zotero.org/settings/keys](https://www.zotero.org/settings/keys/new) and paste it in Settings. Search reflects your synced library; saves go into a remembered collection and arrive in the desktop app via sync, with the PDF as a link attachment.
+
+When both local and key are configured, local wins for search and save; the key covers the times Zotero isn't running.
+
 ## Usage tips
 
 - Try `10.18653/v1/N18-3011`, `arXiv:1706.03762`, or `attention is all you need`.
