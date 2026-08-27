@@ -1,4 +1,5 @@
 import { S2_API, S2_RECOMMENDATIONS_API, type DetailLevel, type ListKind, type Lookup, type Paper, type PaperId } from '../types';
+import { arxivFromDoi } from '../lib/identity';
 import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError, isAbort } from './errors';
 import { DETAIL_FIELDS_PARAM, LIST_FIELDS_PARAM, S2_LIMITS } from './fields';
 import { normalizePaper, type S2PaperRaw } from './normalize';
@@ -65,6 +66,11 @@ export class S2Client implements Provider {
     const kind = m[1]!.toLowerCase();
     const v = m[2]!.trim();
     if (kind === 's2') return SHA_RE.test(v) ? v.toLowerCase() : null;
+    if (kind === 'doi') {
+      // S2 doesn't index papers under DataCite arXiv DOIs; it knows them by arXiv id.
+      const arxiv = arxivFromDoi(v);
+      if (arxiv) return `ARXIV:${arxiv}`;
+    }
     const pre = S2_PREFIX[kind];
     if (!pre) return null;
     if (kind === 'pmcid') return `PMCID:${v.replace(/^PMC/i, '')}`;

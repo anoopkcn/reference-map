@@ -21,6 +21,10 @@ describe('normalizeLookup', () => {
     ['10.1016/S0140-6736(20)30183-5', 'DOI:10.1016/S0140-6736(20)30183-5'],
     ['DOI:https://doi.org/10.1000/182', 'DOI:10.1000/182'],
     ['https://doi.org/10.1002/(SICI)1097-4571(199807)49:9%3C809::AID-ASI5%3E3.0.CO;2-A', 'DOI:10.1002/(SICI)1097-4571(199807)49:9<809::AID-ASI5>3.0.CO;2-A'],
+    // DataCite arXiv DOIs → arXiv lookups (S2 doesn't index the DOI form)
+    ['10.48550/arXiv.2409.05929', 'ARXIV:2409.05929'],
+    ['DOI:10.48550/arXiv.2409.05929', 'ARXIV:2409.05929'],
+    ['https://doi.org/10.48550/arXiv.2409.05929', 'ARXIV:2409.05929'],
     // arXiv
     ['2106.15928', 'ARXIV:2106.15928'],
     ['2106.15928v2', 'ARXIV:2106.15928'],

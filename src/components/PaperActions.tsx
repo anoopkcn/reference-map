@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { copyText } from '../lib/clipboard';
 import { generateBibtex } from '../lib/bibtex';
 import { doiUrl, paperUrl, paperUrlLabel, pdfUrl, plainCitation } from '../lib/format';
@@ -22,8 +22,15 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const pushToast = useAppStore((s) => s.pushToast);
   const expandNode = useAppStore((s) => s.expandNode);
   const zoteroSave = useAppStore((s) => s.zoteroSave);
+  const zoteroCheckLibrary = useAppStore((s) => s.zoteroCheckLibrary);
   const zoteroEnabled = useAppStore((s) => !!s.settings.zoteroApiKey || s.zotero.localAvailable);
+  const zoteroLocalUp = useAppStore((s) => s.zotero.localAvailable);
   const zoteroSaved = useAppStore((s) => !!s.zotero.savedKeys[paper.paperId]);
+
+  // Pre-resolve the button state for papers already in the library (cheap local-API check).
+  useEffect(() => {
+    if (!compact && zoteroLocalUp) void zoteroCheckLibrary(paper.paperId);
+  }, [compact, zoteroLocalUp, paper.paperId, zoteroCheckLibrary]);
   const expanded = useAppStore((s) => (s.graphVersion, s.graph.getNode(paper.paperId)?.expanded ?? false));
   const expanding = useIsExpanding(paper.paperId);
   const [busy, setBusy] = useState<string | null>(null);

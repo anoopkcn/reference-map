@@ -86,14 +86,15 @@ describe('OpenAlexClient', () => {
     expect(c.toNative('oa:W12345')).toBe('W12345');
     expect(c.toNative('W12345')).toBe('W12345');
     expect(c.toNative('DOI:10.1/X')).toBe('doi:10.1/x');
-    expect(c.toNative('doi:10.48550/arXiv.1706.03762')).toBeNull();
+    // arXiv ids resolve via their deterministic DataCite DOI (S2 can't index those DOIs; OpenAlex can).
+    expect(c.toNative('doi:10.48550/arXiv.1706.03762')).toBe('doi:10.48550/arxiv.1706.03762');
     expect(c.toNative('PMID:12')).toBe('pmid:12');
-    expect(c.toNative('ARXIV:1706.03762')).toBeNull();
+    expect(c.toNative('ARXIV:1706.03762')).toBe('doi:10.48550/arxiv.1706.03762');
     expect(c.toNative('CorpusId:1')).toBeNull();
     expect(c.toNative('f6c0e8b4b7c2c0f5c2f1a7a8b9d0e1f2a3b4c5d6')).toBeNull();
     expect(c.lookupFor({ sources: { openalex: 'W1' }, externalIds: { DOI: '10.1/x' } })).toBe('W1');
     expect(c.lookupFor({ sources: {}, externalIds: { DOI: '10.1/X' } })).toBe('doi:10.1/x');
-    expect(c.lookupFor({ sources: {}, externalIds: { ArXiv: '1' } })).toBeNull();
+    expect(c.lookupFor({ sources: {}, externalIds: { ArXiv: '1706.03762' } })).toBe('doi:10.48550/arxiv.1706.03762');
   });
 
   it('getPaper builds the URL with select and mailto; maps 404 / 429', async () => {

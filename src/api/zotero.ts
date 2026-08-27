@@ -1,7 +1,7 @@
 import type { Lookup, Paper } from '../types';
 import { normalizeLookup } from '../lib/ids';
-import { normDoi } from '../lib/identity';
-import { arxivUrl, doiUrl, pdfUrl, venueLine } from '../lib/format';
+import { normArxiv, normDoi } from '../lib/identity';
+import { arxivUrl, doiUrl, venueLine } from '../lib/format';
 import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError } from './errors';
 import { parseRetryAfter } from './s2';
 import type { EnqueueOptions, RequestQueue } from './queue';
@@ -69,7 +69,8 @@ export interface ZoteroCollection {
 export interface ZoteroLike {
   keyInfo(): Promise<ZoteroKeyInfo>;
   searchItems(userId: string, q: string, options?: { limit?: number; signal?: AbortSignal }): Promise<ZoteroItem[]>;
-  findByDoi(userId: string, doi: string): Promise<ZoteroItem | null>;
+  /** Library item exactly matching one of the paper's identifiers, or null. */
+  findByIds(userId: string, ids: { doi?: string; arxiv?: string }): Promise<ZoteroItem | null>;
   collections(userId: string): Promise<ZoteroCollection[]>;
   createItem(userId: string, item: ZoteroItemData): Promise<{ key: string }>;
 }
@@ -139,12 +140,35 @@ export class ZoteroClient implements ZoteroLike {
   }
 
   /** Exact-DOI membership check (quick-search can return full-text false positives, hence the normDoi filter). */
-  async findByDoi(userId: string, doi: string): Promise<ZoteroItem | null> {
+  private async findByDoi(userId: string, doi: string): Promise<ZoteroItem | null> {
     const items = await this.request<ZoteroItem[]>(`zotero:doi:${userId}:${doi}`, `/users/${userId}/items`, {
       params: { q: doi, qmode: 'everything', itemType: '-attachment', limit: '5' },
     });
     const want = normDoi(doi);
     return items.find((i) => i.data.DOI && normDoi(i.data.DOI) === want) ?? null;
+  }
+
+  /**
+   * Membership by any exact identifier. The DOI check misses preprint items (they carry the
+   * arXiv id in archiveID/Extra, often with no DOI field), so arXiv ids get their own query,
+   * verified via lookupFromZoteroItem so full-text mentions of the id don't count.
+   */
+  async findByIds(userId: string, ids: { doi?: string; arxiv?: string }): Promise<ZoteroItem | null> {
+    if (ids.doi) {
+      const hit = await this.findByDoi(userId, ids.doi);
+      if (hit) return hit;
+    }
+    if (ids.arxiv) {
+      const want = `arxiv:${normArxiv(ids.arxiv)}`;
+      const items = await this.request<ZoteroItem[]>(`zotero:arxiv:${userId}:${ids.arxiv}`, `/users/${userId}/items`, {
+        params: { q: ids.arxiv, qmode: 'everything', itemType: '-attachment', limit: '5' },
+      });
+      for (const item of items) {
+        const lookup = lookupFromZoteroItem(item);
+        if (lookup && lookup.toLowerCase() === want) return item;
+      }
+    }
+    return null;
   }
 
   async collections(userId: string): Promise<ZoteroCollection[]> {
@@ -283,8 +307,9 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
           if (signal.aborted) throw new AbortedError();
           throw new NetworkError(e instanceof Error ? e.message : 'Network error', 'zotero');
         }
-        // 201 on success; the body is not interesting.
-        if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`, await safeBody(res), 'zotero');
+        // Strictly 201: the connector server signals some failures (e.g. a read-only target
+        // library) as 200 with a plain-text body, which must not count as saved.
+        if (res.status !== 201) throw new ApiError(res.status, `HTTP ${res.status}`, await safeBody(res), 'zotero');
         if (!pdfUrl) return { pdfAttached: false };
         try {
           const pdf = await this.fetchFn(pdfUrl, { signal });
@@ -299,7 +324,7 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
             body: blob,
             signal,
           });
-          return { pdfAttached: up.ok };
+          return { pdfAttached: up.status === 201 };
         } catch {
           if (signal.aborted) throw new AbortedError();
           return { pdfAttached: false };
@@ -310,10 +335,6 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
   }
 }
 
-/** Best URL for a full-text PDF to attach in Zotero (same preference as the UI's PDF button). */
-export function pdfCandidateUrl(p: Pick<Paper, 'isOpenAccess' | 'openAccessPdf' | 'externalIds'>): string | null {
-  return pdfUrl(p);
-}
 
 /** Connector-flavoured item for a Paper (single-string authors become fieldMode-1 creators). */
 export function paperToConnectorItem(p: Paper): ZoteroConnectorItem {

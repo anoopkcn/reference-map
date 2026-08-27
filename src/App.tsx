@@ -3,6 +3,7 @@ import { SeedPanel } from './components/SeedPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Toasts } from './components/Toast';
 import { ZoteroCollectionDialog } from './components/ZoteroCollectionDialog';
+import { ZoteroFooter } from './components/ZoteroFooter';
 import { Icon, Logo } from './components/icons';
 import { GraphPanel } from './graph/GraphPanel';
 import { useTheme } from './hooks/useTheme';
@@ -42,6 +43,8 @@ export function App() {
             <button className="btn ghost icon" onClick={() => setSettingsOpen(true)} title="Settings" aria-label="Settings"><Icon name="settings" /></button>
           </header>
           <SeedPanel />
+          <ZoteroFooter onOpenSettings={() => setSettingsOpen(true)} />
+          <SidebarResizer />
         </aside>
         <GraphPanel themeKey={resolved} tab={tab} onTab={setTab} />
       </main>
@@ -53,6 +56,83 @@ export function App() {
 }
 
 export type Tab = 'cards' | 'graph';
+
+const SIDEBAR_W_KEY = 'refmap.sidebarW';
+const SIDEBAR_MIN = 300;
+const sidebarMax = () => Math.max(SIDEBAR_MIN, Math.round(window.innerWidth * 0.6));
+const clampSidebar = (px: number) => Math.min(Math.max(Math.round(px), SIDEBAR_MIN), sidebarMax());
+
+function applySidebarWidth(px: number | null): void {
+  const root = document.documentElement;
+  if (px === null) root.style.removeProperty('--sidebar-w');
+  else root.style.setProperty('--sidebar-w', `${px}px`);
+}
+
+function saveSidebarWidth(px: number | null): void {
+  try {
+    if (px === null) localStorage.removeItem(SIDEBAR_W_KEY);
+    else localStorage.setItem(SIDEBAR_W_KEY, String(px));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** Drag handle on the sidebar's right edge. Width is a per-browser preference; double-click resets. */
+function SidebarResizer() {
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDEBAR_W_KEY));
+      if (Number.isFinite(saved) && saved >= SIDEBAR_MIN) applySidebarWidth(clampSidebar(saved));
+    } catch {
+      /* private mode */
+    }
+  }, []);
+
+  // The sidebar starts at x = 0, so the pointer's clientX is the desired width.
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragging(true);
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragging) applySidebarWidth(clampSidebar(e.clientX));
+  };
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    setDragging(false);
+    saveSidebarWidth(clampSidebar(e.clientX));
+  };
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const current = document.querySelector('aside.sidebar')?.getBoundingClientRect().width ?? SIDEBAR_MIN;
+    const next = clampSidebar(current + (e.key === 'ArrowRight' ? 24 : -24));
+    applySidebarWidth(next);
+    saveSidebarWidth(next);
+  };
+
+  return (
+    <div
+      className={`sidebar-resizer ${dragging ? 'dragging' : ''}`}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
+      onDoubleClick={() => {
+        applySidebarWidth(null);
+        saveSidebarWidth(null);
+      }}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      title="Drag to resize the sidebar · double-click to reset"
+    />
+  );
+}
 
 /** Papers / Map switcher, shown only on narrow screens. */
 export function Tabs({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {

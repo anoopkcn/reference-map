@@ -1,4 +1,5 @@
 import type { Lookup } from '../types';
+import { arxivFromDoi } from './identity';
 
 /** Result of parsing what the user typed/pasted into the seed box. */
 export type ParsedInput =
@@ -91,7 +92,7 @@ function normalizeUrl(raw: string): Lookup | null {
 
   if (host === 'doi.org' || host === 'dx.doi.org') {
     const doi = extractDoi(path.slice(1));
-    return doi ? `DOI:${doi}` : null;
+    return doi ? doiLookup(doi) : null;
   }
   if (hostMatches(host, 'arxiv.org')) {
     const m = /^\/(?:abs|pdf|html|format|ps)\/(.+?)(?:\.pdf)?\/?$/i.exec(path);
@@ -136,9 +137,18 @@ function normalizeUrl(raw: string): Lookup | null {
   }
   // Publisher URLs that embed the DOI in the path (springer, wiley, plos, frontiers, …)
   const doi = extractDoi(path + (u.search ? decodeURIComponentSafe(u.search) : ''));
-  if (doi) return `DOI:${doi}`;
+  if (doi) return doiLookup(doi);
   if (S2_URL_HOSTS.some((h) => hostMatches(host, h))) return `URL:${u.href}`;
   return null;
+}
+
+/**
+ * Lookup for an extracted DOI. DataCite arXiv DOIs (10.48550/arXiv.…) become ARXIV lookups:
+ * Semantic Scholar doesn't index papers under them, but both providers can resolve the arXiv id.
+ */
+function doiLookup(doi: string): Lookup {
+  const arxiv = arxivFromDoi(doi);
+  return arxiv ? `ARXIV:${arxiv}` : `DOI:${doi}`;
 }
 
 function decodeURIComponentSafe(s: string): string {
@@ -162,7 +172,7 @@ export function normalizeLookup(token: string): Lookup | null {
     switch (prefix) {
       case 'DOI': {
         const doi = extractDoi(value);
-        return doi ? `DOI:${doi}` : null;
+        return doi ? doiLookup(doi) : null;
       }
       case 'ARXIV': {
         if (URL_LIKE_RE.test(value)) return normalizeUrl(value);
@@ -197,7 +207,7 @@ export function normalizeLookup(token: string): Lookup | null {
   if (OPENALEX_W_RE.test(t)) return `oa:${t.toUpperCase()}`;
 
   const doi = extractDoi(t);
-  if (doi) return `DOI:${doi}`;
+  if (doi) return doiLookup(doi);
 
   return null;
 }

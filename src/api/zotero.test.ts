@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { Paper } from '../types';
 import { ApiError, RateLimitedError, describeError } from './errors';
 import { RequestQueue } from './queue';
-import { ZoteroClient, ZoteroConnectorClient, lookupFromZoteroItem, makeWriteToken, paperToConnectorItem, paperToZoteroItem, pdfCandidateUrl, type ZoteroItem } from './zotero';
+import { pdfUrl } from '../lib/format';
+import { ZoteroClient, ZoteroConnectorClient, lookupFromZoteroItem, makeWriteToken, paperToConnectorItem, paperToZoteroItem, type ZoteroItem } from './zotero';
 
 function mockFetch(handler: (url: string, init?: RequestInit) => { status?: number; body?: unknown; headers?: Record<string, string> }) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -54,12 +55,38 @@ describe('ZoteroClient', () => {
     expect(u.searchParams.get('sort')).toBe('dateModified');
   });
 
-  it('findByDoi only accepts an exact normalized DOI match', async () => {
+  it('findByIds only accepts an exact normalized DOI match', async () => {
     const f = mockFetch(() => ({ body: [zItem({ DOI: '10.1/OTHER' }), zItem({ DOI: 'https://doi.org/10.1/X' })] }));
-    const hit = await client(f.fn).findByDoi('12345', '10.1/x');
+    const hit = await client(f.fn).findByIds('12345', { doi: '10.1/x' });
     expect(hit?.data.DOI).toBe('https://doi.org/10.1/X');
-    const miss = await client(f.fn).findByDoi('12345', '10.9/none');
+    const miss = await client(f.fn).findByIds('12345', { doi: '10.9/none' });
     expect(miss).toBeNull();
+  });
+
+  it('findByIds matches preprint items by arXiv id when the DOI check misses', async () => {
+    const f = mockFetch((url) => {
+      const u = new URL(url);
+      if (u.searchParams.get('q') === '2405.18570') {
+        return {
+          body: [
+            zItem({ title: 'Survey mentioning the id in full text' }),
+            { key: 'PRE12345', version: 1, data: { itemType: 'preprint', title: 'The preprint', archiveID: 'arXiv:2405.18570' } },
+          ],
+        };
+      }
+      return { body: [] };
+    });
+    const hit = await client(f.fn).findByIds('12345', { doi: '10.9/none', arxiv: '2405.18570' });
+    expect(hit?.key).toBe('PRE12345');
+    const arxivCall = new URL(f.calls[1]!.url);
+    expect(arxivCall.searchParams.get('qmode')).toBe('everything');
+    // An item carrying only the DataCite DOI also counts as the same arXiv paper.
+    const f2 = mockFetch(() => ({ body: [zItem({ DOI: '10.48550/arXiv.2405.18570' })] }));
+    const hit2 = await client(f2.fn).findByIds('12345', { arxiv: '2405.18570' });
+    expect(hit2).not.toBeNull();
+    // Full-text-only mentions never count.
+    const f3 = mockFetch(() => ({ body: [zItem({ title: 'Unrelated' })] }));
+    expect(await client(f3.fn).findByIds('12345', { arxiv: '2405.18570' })).toBeNull();
   });
 
   it('createItem POSTs a one-element array with a write token and parses the new key', async () => {
@@ -175,6 +202,17 @@ describe('ZoteroConnectorClient', () => {
     expect(upload.init!.body).toBeInstanceOf(Blob);
   });
 
+  it('treats non-201 responses as failures (200 can carry a plain-text error)', async () => {
+    const q = () => new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 });
+    // saveItems answering 200 "Library files are not editable" must not count as saved…
+    const f = mockFetch(() => ({ status: 200, body: 'Library files are not editable.' }));
+    await expect(new ZoteroConnectorClient({ queue: q(), fetchFn: f.fn }).saveItem(paperToConnectorItem(paper()), 'https://x')).rejects.toBeInstanceOf(ApiError);
+    // …and a 200 on saveAttachment must not count as pdfAttached.
+    const f2 = mockFetch((url) => (url.includes('saveAttachment') ? { status: 200, body: 'Library files are not editable.' } : { status: 201, body: {} }));
+    const res = await new ZoteroConnectorClient({ queue: q(), fetchFn: f2.fn }).saveItem(paperToConnectorItem(paper()), 'https://x', 'https://arxiv.org/pdf/1706.03762');
+    expect(res.pdfAttached).toBe(false);
+  });
+
   it('still reports success when the PDF download fails', async () => {
     const f = mockFetch((url) => {
       if (url.endsWith('/connector/saveItems')) return { status: 201, body: {} };
@@ -187,12 +225,12 @@ describe('ZoteroConnectorClient', () => {
   });
 });
 
-describe('pdfCandidateUrl', () => {
+describe('pdfUrl', () => {
   it('prefers the canonical arXiv PDF over provider OA links (which can be misattributed), else null', () => {
     // e.g. S2's openAccessPdf for ResNet points at an unrelated repository document.
-    expect(pdfCandidateUrl(paper({ openAccessPdf: { url: 'https://repo.example/wrong.pdf' } }))).toBe('https://arxiv.org/pdf/1706.03762');
-    expect(pdfCandidateUrl(paper({ externalIds: { DOI: '10.1/x' }, openAccessPdf: { url: 'https://oa/x.pdf' } }))).toBe('https://oa/x.pdf');
-    expect(pdfCandidateUrl(paper({ externalIds: { DOI: '10.1/x' } }))).toBeNull();
+    expect(pdfUrl(paper({ openAccessPdf: { url: 'https://repo.example/wrong.pdf' } }))).toBe('https://arxiv.org/pdf/1706.03762');
+    expect(pdfUrl(paper({ externalIds: { DOI: '10.1/x' }, openAccessPdf: { url: 'https://oa/x.pdf' } }))).toBe('https://oa/x.pdf');
+    expect(pdfUrl(paper({ externalIds: { DOI: '10.1/x' } }))).toBeNull();
   });
 });
 

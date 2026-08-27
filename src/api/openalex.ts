@@ -216,10 +216,12 @@ export class OpenAlexClient implements Provider {
       case 'openalex':
         return W_RE.test(v) ? v.toUpperCase() : null;
       case 'doi': {
-        if (arxivFromDoi(v)) return null; // DataCite arXiv DOIs are not reliably resolvable here
         const d = normDoi(v);
         return d ? `doi:${d}` : null;
       }
+      case 'arxiv':
+        // OpenAlex has no arXiv-id lookup, but arXiv's DataCite DOIs are deterministic.
+        return `doi:10.48550/arxiv.${normArxiv(v)}`;
       case 'pmid':
         return /^\d+$/.test(v) ? `pmid:${v}` : null;
       case 'mag':
@@ -234,7 +236,8 @@ export class OpenAlexClient implements Provider {
   lookupFor(p: Pick<Paper, 'sources' | 'externalIds'>): string | null {
     if (p.sources.openalex) return p.sources.openalex;
     const x = p.externalIds;
-    if (x.DOI && !arxivFromDoi(x.DOI)) return `doi:${normDoi(x.DOI)}`;
+    if (x.DOI) return `doi:${normDoi(x.DOI)}`;
+    if (x.ArXiv) return `doi:10.48550/arxiv.${normArxiv(x.ArXiv)}`;
     if (x.PubMed) return `pmid:${x.PubMed}`;
     if (x.MAG) return `mag:${x.MAG}`;
     return null;

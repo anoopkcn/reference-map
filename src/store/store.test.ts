@@ -494,8 +494,9 @@ describe('store (two providers)', () => {
   class FakeZotero implements ZoteroLike {
     calls: string[] = [];
     created: ZoteroItemData[] = [];
-    /** DOI that findByDoi should report as already in the library. */
+    /** Identifiers findByIds should report as already in the library. */
     existingDoi: string | null = null;
+    existingArxiv: string | null = null;
     async keyInfo(): Promise<ZoteroKeyInfo> {
       this.calls.push('keyInfo');
       return { userID: 12345, username: 'anoop', canWrite: true };
@@ -507,9 +508,10 @@ describe('store (two providers)', () => {
       if (this.failSearch) throw this.failSearch;
       return this.searchResult;
     }
-    async findByDoi(_userId: string, doi: string): Promise<ZoteroItem | null> {
-      this.calls.push(`findByDoi:${doi}`);
-      return this.existingDoi === doi ? { key: 'EXIST123', version: 1, data: { itemType: 'journalArticle', DOI: doi } } : null;
+    async findByIds(_userId: string, ids: { doi?: string; arxiv?: string }): Promise<ZoteroItem | null> {
+      this.calls.push(`findByIds:${ids.doi ?? ''}:${ids.arxiv ?? ''}`);
+      const hit = (!!ids.doi && ids.doi === this.existingDoi) || (!!ids.arxiv && ids.arxiv === this.existingArxiv);
+      return hit ? { key: 'EXIST123', version: 1, data: { itemType: 'journalArticle', DOI: ids.doi } } : null;
     }
     async collections(): Promise<ZoteroCollection[]> {
       this.calls.push('collections');
@@ -538,7 +540,7 @@ describe('store (two providers)', () => {
     const store = make({ zotero: fake, settings: { ...zoteroSettings, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML', autoExpandSeeds: false } });
     await store.getState().addSeeds(['DOI:10.1/s']);
     await store.getState().zoteroSave('doi:10.1/s');
-    expect(fake.calls).toContain('findByDoi:10.1/s');
+    expect(fake.calls).toContain('findByIds:10.1/s:');
     expect(fake.created).toHaveLength(1);
     expect(fake.created[0]!.collections).toEqual(['C1']);
     expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('NEW12345');
@@ -614,6 +616,7 @@ describe('store (two providers)', () => {
     const local = new FakeZotero();
     local.searchResult = [zItem({ title: 'Local match' })];
     const store = make({ zoteroLocal: local });
+    await store.getState().zoteroProbeLocal();
     await store.getState().searchPapers('graph');
     await settle();
     const s = store.getState().search!;
@@ -623,13 +626,19 @@ describe('store (two providers)', () => {
     expect(s.zotero!.items).toHaveLength(1);
   });
 
-  it('searchPapers drops the Zotero section silently when local fails and no key is set', async () => {
+  it('searchPapers omits the Zotero section when local is unreachable and no key is set', async () => {
     const local = new FakeZotero();
     local.failSearch = new Error('ECONNREFUSED');
     const store = make({ zoteroLocal: local });
     await store.getState().searchPapers('graph');
     await settle();
     expect(store.getState().search!.zotero).toBeUndefined();
+    // The submit still probed in the background, ready to recover once Zotero is back.
+    expect(local.calls.length).toBeGreaterThan(0);
+    local.failSearch = null;
+    await store.getState().searchPapers('graph again');
+    await settle();
+    expect(store.getState().zotero.localAvailable).toBe(true);
   });
 
   it('searchPapers surfaces a Zotero error when a key is configured', async () => {
@@ -710,6 +719,29 @@ describe('store (two providers)', () => {
     expect(t.text).toMatch(/start it, or add a Zotero API key/);
   });
 
+  it('zoteroCheckLibrary pre-resolves membership and caches the answer either way', async () => {
+    const local = new FakeZotero();
+    local.existingDoi = '10.1/s';
+    const store = make({ zoteroLocal: local, settings: { autoExpandSeeds: false } });
+    await store.getState().zoteroProbeLocal();
+    await store.getState().addSeeds(['DOI:10.1/s', 'DOI:10.1/a']);
+    await store.getState().zoteroCheckLibrary('doi:10.1/s');
+    await store.getState().zoteroCheckLibrary('doi:10.1/a');
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('EXIST123');
+    expect(store.getState().zotero.savedKeys['doi:10.1/a']).toBe(false);
+    // Cached: repeated checks don't re-query.
+    const calls = local.calls.length;
+    await store.getState().zoteroCheckLibrary('doi:10.1/s');
+    await store.getState().zoteroCheckLibrary('doi:10.1/a');
+    expect(local.calls.length).toBe(calls);
+    // A known-absent paper can still be saved.
+    const conn = new FakeConnector();
+    const store2 = make({ zoteroLocal: local, zoteroConnector: conn, settings: { autoExpandSeeds: false } });
+    await store2.getState().addSeeds(['DOI:10.1/a']);
+    await store2.getState().zoteroSave('doi:10.1/a');
+    expect(conn.saved).toHaveLength(1);
+  });
+
   it('zoteroProbeLocal reports whether the Zotero app answers', async () => {
     const local = new FakeZotero();
     const store = make({ zoteroLocal: local });
@@ -725,6 +757,7 @@ describe('store (two providers)', () => {
     local.searchResult = [zItem({ title: 'Local match' })];
     const web = new FakeZotero();
     const store = make({ zotero: web, zoteroLocal: local, settings: zoteroSettings });
+    await store.getState().zoteroProbeLocal();
     await store.getState().previewZoteroSearch('atten');
     const s = store.getState().search!;
     expect(s).toMatchObject({ query: 'atten', status: 'idle' });
@@ -747,10 +780,22 @@ describe('store (two providers)', () => {
     await store.getState().previewZoteroSearch('');
     expect(store.getState().search).not.toBeNull();
 
-    local.failSearch = new Error('closed');
     const fresh = make({ zoteroLocal: local });
+    await fresh.getState().zoteroProbeLocal();
+    local.failSearch = new Error('closed');
     await fresh.getState().previewZoteroSearch('graph');
     expect(fresh.getState().search).toBeNull();
+    // The failure also flips reachability off, so the next keystroke doesn't retry.
+    expect(fresh.getState().zotero.localAvailable).toBe(false);
+  });
+
+  it('previewZoteroSearch stays quiet when Zotero is not reachable (no panel flicker)', async () => {
+    const local = new FakeZotero();
+    local.failSearch = new Error('ECONNREFUSED');
+    const store = make({ zoteroLocal: local });
+    await store.getState().previewZoteroSearch('graph');
+    expect(store.getState().search).toBeNull();
+    expect(local.calls).toEqual([]); // not even attempted — nothing to flash in and out
   });
 
   it('zoteroSearch explains itself when neither local Zotero nor an API key is available', async () => {
@@ -758,6 +803,23 @@ describe('store (two providers)', () => {
     local.failSearch = new Error('ECONNREFUSED');
     const store = make({ zotero: new FakeZotero(), zoteroLocal: local });
     await expect(store.getState().zoteroSearch('x')).rejects.toThrow(/start Zotero.*or add a Zotero API key/);
+  });
+
+  it('a verification finishing after the key was cleared does not resurrect the identity', async () => {
+    const fake = new FakeZotero();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    fake.keyInfo = async () => {
+      await gate;
+      return { userID: 12345, username: 'anoop', canWrite: true };
+    };
+    const store = make({ zotero: fake, settings: { zoteroApiKey: 'zk' } });
+    const verifying = store.getState().zoteroVerifyKey();
+    store.getState().updateSettings({ zoteroApiKey: '' });
+    release();
+    await verifying;
+    expect(store.getState().settings.zoteroUserId).toBe('');
+    expect(store.getState().zotero.status).toBe('idle');
   });
 
   it('changing the Zotero API key clears the derived identity and re-verifies', async () => {

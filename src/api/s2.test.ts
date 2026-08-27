@@ -148,6 +148,13 @@ function mockFetch(handler: (url: string, init?: RequestInit) => { status?: numb
 describe('S2Client', () => {
   const queue = () => new RequestQueue({ concurrency: 4, minIntervalMs: 0 });
 
+  it('toNative resolves DataCite arXiv DOIs as arXiv ids (S2 does not index the DOI form)', () => {
+    const c = new S2Client({ queue: queue(), getApiKey: () => '' });
+    expect(c.toNative('DOI:10.48550/arXiv.2409.05929')).toBe('ARXIV:2409.05929');
+    expect(c.toNative('doi:10.48550/arxiv.2409.05929')).toBe('ARXIV:2409.05929');
+    expect(c.toNative('DOI:10.1000/182')).toBe('DOI:10.1000/182');
+  });
+
   it('getPaper builds the URL, sends the api key and normalizes', async () => {
     const f = mockFetch(() => ({ body: raw }));
     const c = new S2Client({ queue: queue(), fetchFn: f.fn, getApiKey: () => 'KEY' });

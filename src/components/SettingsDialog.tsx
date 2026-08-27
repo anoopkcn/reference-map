@@ -73,7 +73,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             ))}
           </div>
           <span className="faint small">
-            Automatic uses whichever source is healthy and fastest for each request and falls back to the other. Note: arXiv, ACL, CorpusId and URL
+            Automatic uses whichever source is healthy and fastest for each request and falls back to the other. Note: ACL, CorpusId and URL
             lookups are only supported by Semantic Scholar.
           </span>
         </div>
