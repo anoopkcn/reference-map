@@ -18,7 +18,14 @@ export function arxivUrl(p: Pick<Paper, 'externalIds'>): string | null {
   return id ? `https://arxiv.org/abs/${id}` : null;
 }
 
-export function pdfUrl(p: Pick<Paper, 'isOpenAccess' | 'openAccessPdf'>): string | null {
+/**
+ * Best full-text PDF. arXiv's canonical PDF wins whenever the paper has an arXiv id: the
+ * providers' open-access links are occasionally misattributed upstream (e.g. an institutional-
+ * repository document that merely cites the paper), while arxiv.org/pdf/<id> is always the paper.
+ */
+export function pdfUrl(p: Pick<Paper, 'externalIds' | 'openAccessPdf'>): string | null {
+  const arxiv = p.externalIds.ArXiv;
+  if (arxiv) return `https://arxiv.org/pdf/${arxiv}`;
   return p.openAccessPdf?.url || null;
 }
 

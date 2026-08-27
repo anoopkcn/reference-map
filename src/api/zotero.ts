@@ -1,13 +1,15 @@
 import type { Lookup, Paper } from '../types';
 import { normalizeLookup } from '../lib/ids';
 import { normDoi } from '../lib/identity';
-import { arxivUrl, doiUrl, venueLine } from '../lib/format';
+import { arxivUrl, doiUrl, pdfUrl, venueLine } from '../lib/format';
 import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError } from './errors';
 import { parseRetryAfter } from './s2';
 import type { EnqueueOptions, RequestQueue } from './queue';
 
 export const ZOTERO_API = 'https://api.zotero.org';
-/** Vite-proxied base of the running Zotero app's read-only local API (see vite.config.ts). */
+/** Vite-proxied root of the running Zotero app's server (see vite.config.ts). */
+export const ZOTERO_LOCAL_ROOT = '/zotero-local';
+/** Vite-proxied base of the running Zotero app's read-only local API. */
 export const ZOTERO_LOCAL_API = '/zotero-local/api';
 /** The local API serves the current user's library as userID 0. */
 export const ZOTERO_LOCAL_USER = '0';
@@ -28,6 +30,10 @@ export interface ZoteroCreator {
 /** The `data` payload of a Zotero item — only the fields we read or write. */
 export interface ZoteroItemData {
   itemType: string;
+  /** Attachment items only. */
+  linkMode?: string;
+  parentItem?: string;
+  contentType?: string;
   title?: string;
   creators?: ZoteroCreator[];
   abstractNote?: string;
@@ -215,6 +221,112 @@ async function safeBody(res: Response): Promise<unknown> {
   } catch {
     return undefined;
   }
+}
+
+/** Translator-style creator used by the connector endpoints (`fieldMode: 1` = single-field name). */
+export interface ZoteroConnectorCreator {
+  firstName?: string;
+  lastName: string;
+  fieldMode?: number;
+  creatorType: string;
+}
+
+/** Item payload for `/connector/saveItems` — like ZoteroItemData but translator-flavoured. */
+export interface ZoteroConnectorItem extends Omit<ZoteroItemData, 'collections' | 'creators'> {
+  /** Client-generated handle that saveAttachment's parentItemID refers back to. */
+  id?: string;
+  creators: ZoteroConnectorCreator[];
+  attachments: unknown[];
+}
+
+/** What the store needs from the connector write path (fakes implement this in tests). */
+export interface ZoteroConnectorLike {
+  saveItem(item: ZoteroConnectorItem, uri: string, pdfUrl?: string): Promise<{ pdfAttached: boolean }>;
+}
+
+/**
+ * Keyless writes into the RUNNING Zotero app via its connector endpoint (the same one the
+ * browser extension uses). Items are filed into the collection currently selected in Zotero.
+ */
+export class ZoteroConnectorClient implements ZoteroConnectorLike {
+  private readonly queue: RequestQueue;
+  private readonly fetchFn: typeof fetch;
+  private readonly baseUrl: string;
+
+  constructor(options: { queue: RequestQueue; fetchFn?: typeof fetch; baseUrl?: string }) {
+    this.queue = options.queue;
+    this.fetchFn = options.fetchFn ?? ((...args) => fetch(...args));
+    this.baseUrl = options.baseUrl ?? ZOTERO_LOCAL_ROOT;
+  }
+
+  /**
+   * Save the item; when `pdfUrl` is given, additionally download the PDF in the browser and
+   * upload it as a child attachment (the modern connector contract — Zotero no longer fetches
+   * attachment URLs itself). The PDF is best-effort: CORS or download failures still leave the
+   * item saved, reported as `pdfAttached: false`.
+   */
+  async saveItem(item: ZoteroConnectorItem, uri: string, pdfUrl?: string): Promise<{ pdfAttached: boolean }> {
+    const sessionID = makeWriteToken();
+    const itemId = makeWriteToken();
+    return this.queue.enqueue<{ pdfAttached: boolean }>(
+      `zotero:connector:${sessionID}`,
+      async (signal) => {
+        let res: Response;
+        try {
+          res = await this.fetchFn(`${this.baseUrl}/connector/saveItems`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Zotero-Connector-API-Version': '3' },
+            body: JSON.stringify({ sessionID, uri, items: [{ ...item, id: itemId }] }),
+            signal,
+          });
+        } catch (e) {
+          if (signal.aborted) throw new AbortedError();
+          throw new NetworkError(e instanceof Error ? e.message : 'Network error', 'zotero');
+        }
+        // 201 on success; the body is not interesting.
+        if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`, await safeBody(res), 'zotero');
+        if (!pdfUrl) return { pdfAttached: false };
+        try {
+          const pdf = await this.fetchFn(pdfUrl, { signal });
+          if (!pdf.ok) return { pdfAttached: false };
+          const blob = await pdf.blob();
+          const up = await this.fetchFn(`${this.baseUrl}/connector/saveAttachment?sessionID=${sessionID}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/pdf',
+              'X-Metadata': JSON.stringify({ sessionID, parentItemID: itemId, title: 'Full Text PDF', url: pdfUrl }),
+            },
+            body: blob,
+            signal,
+          });
+          return { pdfAttached: up.ok };
+        } catch {
+          if (signal.aborted) throw new AbortedError();
+          return { pdfAttached: false };
+        }
+      },
+      {},
+    );
+  }
+}
+
+/** Best URL for a full-text PDF to attach in Zotero (same preference as the UI's PDF button). */
+export function pdfCandidateUrl(p: Pick<Paper, 'isOpenAccess' | 'openAccessPdf' | 'externalIds'>): string | null {
+  return pdfUrl(p);
+}
+
+/** Connector-flavoured item for a Paper (single-string authors become fieldMode-1 creators). */
+export function paperToConnectorItem(p: Paper): ZoteroConnectorItem {
+  const { collections: _collections, creators, ...rest } = paperToZoteroItem(p, '');
+  return {
+    ...rest,
+    creators: (creators ?? []).map((c) => ({
+      creatorType: c.creatorType,
+      lastName: c.name ?? [c.firstName, c.lastName].filter(Boolean).join(' '),
+      fieldMode: 1,
+    })),
+    attachments: [],
+  };
 }
 
 /** 32-hex idempotency token for Zotero-Write-Token. */

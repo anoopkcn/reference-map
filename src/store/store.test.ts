@@ -4,7 +4,7 @@ import { NetworkError, NotFoundError, UnsupportedLookupError } from '../api/erro
 import { ProviderStats, type ListResult, type Provider, type SearchResult } from '../api/provider';
 import { RequestQueue, type EnqueueOptions } from '../api/queue';
 import { Router } from '../api/router';
-import type { ZoteroCollection, ZoteroItem, ZoteroItemData, ZoteroKeyInfo, ZoteroLike } from '../api/zotero';
+import type { ZoteroCollection, ZoteroConnectorItem, ZoteroConnectorLike, ZoteroItem, ZoteroItemData, ZoteroKeyInfo, ZoteroLike } from '../api/zotero';
 import { Identity } from '../lib/identity';
 import { DEFAULT_SETTINGS, type DetailLevel, type ListKind, type Lookup, type Paper, type ProviderId } from '../types';
 import { createAppStore } from './store';
@@ -138,7 +138,7 @@ describe('store (two providers)', () => {
     oa = new FakeProvider('openalex');
   });
 
-  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike } = {}) => {
+  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike; zoteroConnector?: ZoteroConnectorLike } = {}) => {
     const c = over.cache ?? cache;
     const identity = new Identity(c);
     const store = createAppStore({
@@ -151,6 +151,7 @@ describe('store (two providers)', () => {
       seedRetryDelays: over.seedRetryDelays ?? [],
       zotero: over.zotero,
       zoteroLocal: over.zoteroLocal,
+      zoteroConnector: over.zoteroConnector,
     });
     return store;
   };
@@ -520,6 +521,15 @@ describe('store (two providers)', () => {
       return { key: 'NEW12345' };
     }
   }
+  class FakeConnector implements ZoteroConnectorLike {
+    saved: { item: ZoteroConnectorItem; uri: string; pdfUrl?: string }[] = [];
+    fail: unknown = null;
+    async saveItem(item: ZoteroConnectorItem, uri: string, pdfUrl?: string): Promise<{ pdfAttached: boolean }> {
+      if (this.fail) throw this.fail;
+      this.saved.push({ item, uri, pdfUrl });
+      return { pdfAttached: !!pdfUrl };
+    }
+  }
   const zoteroSettings = { zoteroApiKey: 'zk', zoteroUserId: '12345', zoteroUsername: 'anoop' };
   const zItem = (data: Partial<ZoteroItemData>): ZoteroItem => ({ key: 'I1', version: 1, data: { itemType: 'journalArticle', ...data } });
 
@@ -631,6 +641,83 @@ describe('store (two providers)', () => {
     await store.getState().searchPapers('graph');
     await settle();
     expect(store.getState().search!.zotero).toMatchObject({ status: 'error' });
+  });
+
+  it('zoteroSave uses the local connector without any key', async () => {
+    const conn = new FakeConnector();
+    const local = new FakeZotero();
+    const store = make({ zoteroConnector: conn, zoteroLocal: local, settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(conn.saved).toHaveLength(1);
+    expect(conn.saved[0]!.item.creators[0]).toMatchObject({ fieldMode: 1 });
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('local');
+    expect(store.getState().zotero.localAvailable).toBe(true);
+    expect(store.getState().toasts.at(-1)!.text).toBe('Added to Zotero');
+  });
+
+  it('zoteroSave passes an available PDF to the connector and says so', async () => {
+    const conn = new FakeConnector();
+    // Force OpenAlex so the resolved paper carries an openAccessPdf url (see mk()).
+    const store = make({ zoteroConnector: conn, zoteroLocal: new FakeZotero(), settings: { sourceMode: 'openalex', autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(conn.saved[0]!.pdfUrl).toBe('https://oa/S.pdf');
+    expect(store.getState().toasts.at(-1)!.text).toBe('Added to Zotero with PDF');
+  });
+
+  it('the web path adds the PDF as a link attachment on the new item', async () => {
+    const web = new FakeZotero();
+    const store = make({ zotero: web, settings: { ...zoteroSettings, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML', sourceMode: 'openalex', autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(web.created).toHaveLength(2);
+    expect(web.created[1]).toMatchObject({ itemType: 'attachment', linkMode: 'linked_url', parentItem: 'NEW12345', url: 'https://oa/S.pdf', contentType: 'application/pdf' });
+    expect(store.getState().toasts.at(-1)!.text).toBe('Added to Zotero');
+  });
+
+  it('zoteroSave skips the connector for papers already in the local library', async () => {
+    const conn = new FakeConnector();
+    const local = new FakeZotero();
+    local.existingDoi = '10.1/s';
+    const store = make({ zoteroConnector: conn, zoteroLocal: local, settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(conn.saved).toHaveLength(0);
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('EXIST123');
+    expect(store.getState().toasts.at(-1)!.text).toBe('Already in your Zotero library');
+  });
+
+  it('zoteroSave falls back to the web API when the connector fails', async () => {
+    const conn = new FakeConnector();
+    conn.fail = new Error('Zotero closed');
+    const web = new FakeZotero();
+    const store = make({ zoteroConnector: conn, zotero: web, settings: { ...zoteroSettings, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML', autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(web.calls).toContain('create');
+    expect(store.getState().toasts.at(-1)!.text).toBe('Added to Zotero');
+  });
+
+  it('zoteroSave explains itself when the connector fails and no key is set', async () => {
+    const conn = new FakeConnector();
+    conn.fail = new Error('Zotero closed');
+    const store = make({ zoteroConnector: conn, settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    const t = store.getState().toasts.at(-1)!;
+    expect(t.kind).toBe('error');
+    expect(t.text).toMatch(/start it, or add a Zotero API key/);
+  });
+
+  it('zoteroProbeLocal reports whether the Zotero app answers', async () => {
+    const local = new FakeZotero();
+    const store = make({ zoteroLocal: local });
+    await store.getState().zoteroProbeLocal();
+    expect(store.getState().zotero.localAvailable).toBe(true);
+    local.failSearch = new Error('closed');
+    await store.getState().zoteroProbeLocal();
+    expect(store.getState().zotero.localAvailable).toBe(false);
   });
 
   it('previewZoteroSearch shows local results as you type, leaving the web part idle', async () => {

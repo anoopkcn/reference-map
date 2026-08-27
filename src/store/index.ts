@@ -3,7 +3,7 @@ import { OA_QUEUE, OpenAlexClient } from '../api/openalex';
 import { RequestQueue } from '../api/queue';
 import { Router } from '../api/router';
 import { S2Client } from '../api/s2';
-import { ZOTERO_LOCAL_API, ZoteroClient } from '../api/zotero';
+import { ZOTERO_LOCAL_API, ZoteroClient, ZoteroConnectorClient } from '../api/zotero';
 import { Identity } from '../lib/identity';
 import { loadSettings } from './settings';
 import { createAppStore } from './store';
@@ -24,8 +24,11 @@ export const zotero = new ZoteroClient({ queue: zoteroQueue, getApiKey: () => ap
 // Same-machine reads: no retries so a closed Zotero fails instantly and the web API takes over.
 export const zoteroLocalQueue = new RequestQueue({ concurrency: 4, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 });
 export const zoteroLocal = new ZoteroClient({ queue: zoteroLocalQueue, baseUrl: ZOTERO_LOCAL_API, getApiKey: () => '' });
+export const zoteroConnector = new ZoteroConnectorClient({ queue: zoteroLocalQueue });
 
-export const appStore = createAppStore({ router, identity, cache: startupCache, settings: loadSettings(), zotero, zoteroLocal });
+export const appStore = createAppStore({ router, identity, cache: startupCache, settings: loadSettings(), zotero, zoteroLocal, zoteroConnector });
+// Learn at startup whether the Zotero app is reachable, so keyless save UI can show right away.
+void appStore.getState().zoteroProbeLocal();
 
 /** Apply the theme to <html data-theme> synchronously whenever it changes (before React effects read CSS variables). */
 function applyTheme(theme: string): void {

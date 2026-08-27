@@ -22,7 +22,7 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const pushToast = useAppStore((s) => s.pushToast);
   const expandNode = useAppStore((s) => s.expandNode);
   const zoteroSave = useAppStore((s) => s.zoteroSave);
-  const zoteroEnabled = useAppStore((s) => !!s.settings.zoteroApiKey);
+  const zoteroEnabled = useAppStore((s) => !!s.settings.zoteroApiKey || s.zotero.localAvailable);
   const zoteroSaved = useAppStore((s) => !!s.zotero.savedKeys[paper.paperId]);
   const expanded = useAppStore((s) => (s.graphVersion, s.graph.getNode(paper.paperId)?.expanded ?? false));
   const expanding = useIsExpanding(paper.paperId);

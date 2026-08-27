@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Paper } from '../types';
 import { ApiError, RateLimitedError, describeError } from './errors';
 import { RequestQueue } from './queue';
-import { ZoteroClient, lookupFromZoteroItem, makeWriteToken, paperToZoteroItem, type ZoteroItem } from './zotero';
+import { ZoteroClient, ZoteroConnectorClient, lookupFromZoteroItem, makeWriteToken, paperToConnectorItem, paperToZoteroItem, pdfCandidateUrl, type ZoteroItem } from './zotero';
 
 function mockFetch(handler: (url: string, init?: RequestInit) => { status?: number; body?: unknown; headers?: Record<string, string> }) {
   const calls: { url: string; init?: RequestInit }[] = [];
@@ -121,6 +121,78 @@ describe('ZoteroClient', () => {
     expect(all).toHaveLength(150);
     expect(new URL(f.calls[1]!.url).searchParams.get('start')).toBe('100');
     expect(all[149]).toEqual({ key: 'C149', name: 'Coll 149', parentCollection: false });
+  });
+});
+
+describe('ZoteroConnectorClient', () => {
+  it('POSTs a translator-style item into the running app', async () => {
+    const f = mockFetch(() => ({ status: 201, body: {} }));
+    const c = new ZoteroConnectorClient({ queue: queue(), fetchFn: f.fn });
+    await c.saveItem(paperToConnectorItem(paper()), 'https://doi.org/10.1/x');
+    const call = f.calls[0]!;
+    expect(call.url).toBe('/zotero-local/connector/saveItems');
+    expect(call.init!.method).toBe('POST');
+    const headers = new Headers(call.init!.headers);
+    expect(headers.get('x-zotero-connector-api-version')).toBe('3');
+    expect(headers.get('content-type')).toBe('application/json');
+    const body = JSON.parse(String(call.init!.body)) as { sessionID: string; uri: string; items: Record<string, unknown>[] };
+    expect(body.sessionID).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.uri).toBe('https://doi.org/10.1/x');
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]!.creators).toEqual([
+      { creatorType: 'author', lastName: 'Ashish Vaswani', fieldMode: 1 },
+      { creatorType: 'author', lastName: 'Noam Shazeer', fieldMode: 1 },
+    ]);
+    expect(body.items[0]!.collections).toBeUndefined();
+    expect(body.items[0]!.attachments).toEqual([]);
+  });
+
+  it('surfaces failures as ApiError', async () => {
+    const f = mockFetch(() => ({ status: 500 }));
+    const q = new RequestQueue({ concurrency: 1, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 });
+    const c = new ZoteroConnectorClient({ queue: q, fetchFn: f.fn });
+    await expect(c.saveItem(paperToConnectorItem(paper()), 'https://x')).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('downloads and uploads the PDF as a child attachment', async () => {
+    const f = mockFetch((url) => {
+      if (url.endsWith('/connector/saveItems')) return { status: 201, body: {} };
+      if (url.startsWith('https://arxiv.org/pdf/')) return { status: 200, body: 'pdf-bytes' };
+      if (url.includes('/connector/saveAttachment')) return { status: 201, body: {} };
+      return { status: 404 };
+    });
+    const c = new ZoteroConnectorClient({ queue: queue(), fetchFn: f.fn });
+    const res = await c.saveItem(paperToConnectorItem(paper()), 'https://doi.org/10.1/x', 'https://arxiv.org/pdf/1706.03762');
+    expect(res.pdfAttached).toBe(true);
+    const saveBody = JSON.parse(String(f.calls[0]!.init!.body)) as { sessionID: string; items: { id: string }[] };
+    const upload = f.calls[2]!;
+    expect(upload.url).toBe(`/zotero-local/connector/saveAttachment?sessionID=${saveBody.sessionID}`);
+    const headers = new Headers(upload.init!.headers);
+    expect(headers.get('content-type')).toBe('application/pdf');
+    const meta = JSON.parse(headers.get('x-metadata')!) as Record<string, string>;
+    expect(meta.parentItemID).toBe(saveBody.items[0]!.id);
+    expect(meta.title).toBe('Full Text PDF');
+    expect(upload.init!.body).toBeInstanceOf(Blob);
+  });
+
+  it('still reports success when the PDF download fails', async () => {
+    const f = mockFetch((url) => {
+      if (url.endsWith('/connector/saveItems')) return { status: 201, body: {} };
+      return { status: 404 };
+    });
+    const c = new ZoteroConnectorClient({ queue: queue(), fetchFn: f.fn });
+    const res = await c.saveItem(paperToConnectorItem(paper()), 'https://x', 'https://blocked.example/paper.pdf');
+    expect(res.pdfAttached).toBe(false);
+    expect(f.calls.some((call) => call.url.includes('saveAttachment'))).toBe(false);
+  });
+});
+
+describe('pdfCandidateUrl', () => {
+  it('prefers the canonical arXiv PDF over provider OA links (which can be misattributed), else null', () => {
+    // e.g. S2's openAccessPdf for ResNet points at an unrelated repository document.
+    expect(pdfCandidateUrl(paper({ openAccessPdf: { url: 'https://repo.example/wrong.pdf' } }))).toBe('https://arxiv.org/pdf/1706.03762');
+    expect(pdfCandidateUrl(paper({ externalIds: { DOI: '10.1/x' }, openAccessPdf: { url: 'https://oa/x.pdf' } }))).toBe('https://oa/x.pdf');
+    expect(pdfCandidateUrl(paper({ externalIds: { DOI: '10.1/x' } }))).toBeNull();
   });
 });
 

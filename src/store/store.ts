@@ -5,8 +5,8 @@ import { hasUnicodeReplacement, mergePaper } from '../api/normalize';
 import { PRIORITY } from '../api/provider';
 import { AUTH_QUEUE, UNAUTH_QUEUE } from '../api/queue';
 import type { ProviderStatus, Router } from '../api/router';
-import { lookupFromZoteroItem, paperToZoteroItem, ZOTERO_LOCAL_USER, type ZoteroCollection, type ZoteroItem, type ZoteroLike } from '../api/zotero';
-import { truncate } from '../lib/format';
+import { lookupFromZoteroItem, paperToConnectorItem, paperToZoteroItem, pdfCandidateUrl, ZOTERO_LOCAL_USER, type ZoteroCollection, type ZoteroConnectorLike, type ZoteroItem, type ZoteroLike } from '../api/zotero';
+import { arxivUrl, doiUrl, truncate } from '../lib/format';
 import { Identity, lookupToAliasKey } from '../lib/identity';
 import { lookupKey } from '../lib/ids';
 import { DEFAULT_SETTINGS, type ListKind, type ListState, type LoadStatus, type Lookup, type Paper, type PaperId, type ProviderId, type Seed, type Settings } from '../types';
@@ -58,6 +58,8 @@ export interface ZoteroState {
   savedKeys: Record<PaperId, string>;
   /** Where the last successful picker search was answered from. */
   searchSource: 'local' | 'web' | null;
+  /** The running Zotero app answered a local request this session (enables keyless save UI). */
+  localAvailable: boolean;
 }
 
 export interface AppState {
@@ -112,8 +114,10 @@ export interface AppState {
   zoteroSearch(query: string, signal?: AbortSignal): Promise<ZoteroItem[]>;
   /** Seed the map from a picked Zotero item; falls back to a title search when it has no identifier. */
   seedFromZoteroItem(item: ZoteroItem): Promise<void>;
-  /** Save a paper to Zotero; the first save asks for a target collection. */
+  /** Save a paper to Zotero: into the running app when reachable (keyless), else via the web API. */
   zoteroSave(id: PaperId): Promise<void>;
+  /** One startup ping to the running Zotero app, so keyless save UI can show. */
+  zoteroProbeLocal(): Promise<void>;
   zoteroOpenCollectionDialog(): void;
   zoteroChooseCollection(key: string, name: string): void;
   zoteroCancelCollection(): void;
@@ -134,6 +138,8 @@ export interface StoreDeps {
   zotero?: ZoteroLike;
   /** Read-only client for the running Zotero app's local API; tried before `zotero` for searches. */
   zoteroLocal?: ZoteroLike;
+  /** Keyless write path into the running Zotero app; tried before the web API for saves. */
+  zoteroConnector?: ZoteroConnectorLike;
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -151,6 +157,7 @@ export function createAppStore(deps: StoreDeps) {
   const { router, identity } = deps;
   const zotero = deps.zotero;
   const zoteroLocal = deps.zoteroLocal;
+  const zoteroConnector = deps.zoteroConnector;
   let zoteroVerifyPromise: Promise<boolean> | null = null;
   let cache = deps.cache;
   let cacheReady: Promise<void> = Promise.resolve();
@@ -320,7 +327,7 @@ export function createAppStore(deps: StoreDeps) {
       seedRetryTimers.set(key, timer);
     };
 
-    const initialZotero = (): ZoteroState => ({
+    const initialZotero = (localAvailable = false): ZoteroState => ({
       status: 'idle',
       username: '',
       canWrite: false,
@@ -330,6 +337,7 @@ export function createAppStore(deps: StoreDeps) {
       collectionsStatus: 'idle',
       savedKeys: {},
       searchSource: null,
+      localAvailable,
     });
 
     const setZotero = (patch: Partial<ZoteroState>): void => set({ zotero: { ...get().zotero, ...patch } });
@@ -355,6 +363,38 @@ export function createAppStore(deps: StoreDeps) {
       }
     };
 
+    /**
+     * Save into the running Zotero app via the connector (keyless, instant, files into the
+     * collection selected in Zotero). True = handled (saved, duplicate, or nothing to save);
+     * false = connector unavailable/failed, caller should try the web API.
+     */
+    const tryConnectorSave = async (id: PaperId): Promise<boolean> => {
+      if (!zoteroConnector) return false;
+      const p = (await get().ensureDetail(id)) ?? get().papers.get(id);
+      if (!p) return true;
+      try {
+        const doi = p.externalIds.DOI;
+        if (doi && zoteroLocal) {
+          const existing = await zoteroLocal.findByDoi(ZOTERO_LOCAL_USER, doi);
+          if (existing) {
+            setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: existing.key }, localAvailable: true });
+            get().pushToast('Already in your Zotero library');
+            return true;
+          }
+        }
+        const saved = await zoteroConnector.saveItem(
+          paperToConnectorItem(p),
+          doiUrl(p) ?? arxivUrl(p) ?? 'https://www.semanticscholar.org',
+          pdfCandidateUrl(p) ?? undefined,
+        );
+        setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: 'local' }, localAvailable: true });
+        get().pushToast(saved.pdfAttached ? 'Added to Zotero with PDF' : 'Added to Zotero');
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     const performZoteroSave = async (id: PaperId): Promise<void> => {
       if (!zotero) return;
       try {
@@ -372,6 +412,16 @@ export function createAppStore(deps: StoreDeps) {
         }
         const saved = await zotero.createItem(userId, paperToZoteroItem(p, get().settings.zoteroCollectionKey));
         setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: saved.key } });
+        // Browsers can't reliably fetch cross-origin PDFs for a real upload, so the web
+        // path attaches the open-access URL as a link attachment instead. Best-effort.
+        const pdf = pdfCandidateUrl(p);
+        if (pdf) {
+          try {
+            await zotero.createItem(userId, { itemType: 'attachment', linkMode: 'linked_url', parentItem: saved.key, title: 'Full Text PDF', url: pdf, contentType: 'application/pdf' });
+          } catch {
+            /* the item itself saved; the link is a bonus */
+          }
+        }
         get().pushToast('Added to Zotero');
       } catch (e) {
         if (!isAbort(e)) get().pushToast(describeError(e), 'error');
@@ -760,7 +810,7 @@ export function createAppStore(deps: StoreDeps) {
           const now = get().search;
           if (ctrl.signal.aborted || now?.query !== q || now.status !== 'idle') return;
           set({ search: { ...now, zotero: { status: 'ready', items } } });
-          setZotero({ searchSource: 'local' });
+          setZotero({ searchSource: 'local', localAvailable: true });
         } catch (e) {
           if (ctrl.signal.aborted || isAbort(e)) return;
           // Best-effort: no running Zotero, no preview.
@@ -829,7 +879,7 @@ export function createAppStore(deps: StoreDeps) {
         if (next.apiKey !== prev.apiKey) router.providers.s2?.queue.configure(next.apiKey ? AUTH_QUEUE : UNAUTH_QUEUE);
         if (next.zoteroApiKey !== prev.zoteroApiKey) {
           // The cached identity and collection belong to the old key.
-          set({ settings: sanitizeSettings({ ...next, zoteroUserId: '', zoteroUsername: '', zoteroCollectionKey: '', zoteroCollectionName: '' }), zotero: initialZotero() });
+          set({ settings: sanitizeSettings({ ...next, zoteroUserId: '', zoteroUsername: '', zoteroCollectionKey: '', zoteroCollectionName: '' }), zotero: initialZotero(get().zotero.localAvailable) });
           if (next.zoteroApiKey) void get().zoteroVerifyKey();
         }
       },
@@ -875,7 +925,7 @@ export function createAppStore(deps: StoreDeps) {
         if (zoteroLocal) {
           try {
             const items = await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, query, { limit: 20, signal });
-            setZotero({ searchSource: 'local' });
+            setZotero({ searchSource: 'local', localAvailable: true });
             return items;
           } catch (e) {
             if (isAbort(e)) throw e;
@@ -918,13 +968,30 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       async zoteroSave(id) {
-        if (!zotero || !get().settings.zoteroApiKey || get().zotero.savedKeys[id]) return;
+        if (get().zotero.savedKeys[id]) return;
+        const canWeb = !!zotero && !!get().settings.zoteroApiKey;
+        if (!zoteroConnector && !canWeb) return;
+        if (await tryConnectorSave(id)) return;
+        if (!canWeb) {
+          get().pushToast('Zotero isn’t running — start it, or add a Zotero API key in Settings to save via zotero.org', 'error');
+          return;
+        }
         if (get().settings.zoteroCollectionName === '') {
           setZotero({ savePendingId: id, collectionDialogOpen: true });
           void loadZoteroCollections();
           return;
         }
         await performZoteroSave(id);
+      },
+
+      async zoteroProbeLocal() {
+        if (!zoteroLocal) return;
+        try {
+          await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, '', { limit: 1 });
+          setZotero({ localAvailable: true });
+        } catch {
+          setZotero({ localAvailable: false });
+        }
       },
 
       zoteroOpenCollectionDialog() {

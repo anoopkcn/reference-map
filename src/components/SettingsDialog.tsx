@@ -114,7 +114,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             <button className="btn icon" onClick={() => setShowZKey((v) => !v)} title={showZKey ? 'Hide' : 'Show'} aria-label={showZKey ? 'Hide Zotero API key' : 'Show Zotero API key'} aria-pressed={showZKey}><Icon name="eye" /></button>
           </div>
           <span className="faint small">
-            Enables searching your library and saving papers to it. Create a key with library read and write access at{' '}
+            While the Zotero app is running on this computer, searching and saving work without a key. A key adds zotero.org access for when it
+            isn't — create one with library read and write access at{' '}
             <a href="https://www.zotero.org/settings/keys/new" target="_blank" rel="noopener noreferrer">zotero.org/settings/keys</a>. Stored only in this browser.
           </span>
           {settings.zoteroApiKey && zotero.status === 'checking' && (
