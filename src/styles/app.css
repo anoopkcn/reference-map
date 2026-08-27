@@ -206,6 +206,15 @@ button:disabled { cursor: default; opacity: 0.5; }
 .segmented button { height: 26px; padding: 0 10px; border-radius: 3px; font-size: var(--fs-sm); color: var(--text-muted); }
 .segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
 
+/* ---------- Zotero collection dialog & search sections ---------- */
+.picker-results { border: 1px solid var(--border); border-radius: var(--radius); overflow-y: auto; max-height: 55vh; min-height: 60px; }
+.picker-title { font-size: var(--fs-sm); font-weight: 500; }
+.collection-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px 10px; background: none; border: 0; border-bottom: 1px solid var(--border); color: var(--text); cursor: pointer; font-size: var(--fs-sm); }
+.collection-row:hover { background: var(--surface-2); }
+.collection-row:last-child { border-bottom: 0; }
+.subsection-head { display: flex; align-items: center; gap: 5px; padding: 6px 10px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.subsection-head:not(:nth-child(2)) { border-top: 1px solid var(--border); }
+
 /* ---------- graph panel (toolbar etc.) ---------- */
 .graph-toolbar { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; align-items: center; gap: 6px; z-index: 2; pointer-events: none; }
 .graph-toolbar > * { pointer-events: auto; }

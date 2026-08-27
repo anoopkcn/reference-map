@@ -4,6 +4,7 @@ import { NetworkError, NotFoundError, UnsupportedLookupError } from '../api/erro
 import { ProviderStats, type ListResult, type Provider, type SearchResult } from '../api/provider';
 import { RequestQueue, type EnqueueOptions } from '../api/queue';
 import { Router } from '../api/router';
+import type { ZoteroCollection, ZoteroItem, ZoteroItemData, ZoteroKeyInfo, ZoteroLike } from '../api/zotero';
 import { Identity } from '../lib/identity';
 import { DEFAULT_SETTINGS, type DetailLevel, type ListKind, type Lookup, type Paper, type ProviderId } from '../types';
 import { createAppStore } from './store';
@@ -137,7 +138,7 @@ describe('store (two providers)', () => {
     oa = new FakeProvider('openalex');
   });
 
-  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[] } = {}) => {
+  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike } = {}) => {
     const c = over.cache ?? cache;
     const identity = new Identity(c);
     const store = createAppStore({
@@ -148,6 +149,8 @@ describe('store (two providers)', () => {
       toastMs: 0,
       now: over.now ?? (() => 10),
       seedRetryDelays: over.seedRetryDelays ?? [],
+      zotero: over.zotero,
+      zoteroLocal: over.zoteroLocal,
     });
     return store;
   };
@@ -485,5 +488,202 @@ describe('store (two providers)', () => {
     state().select(null);
     state().select('doi:10.1/a');
     expect(state().selectionHistory).toEqual(['doi:10.1/a', 'doi:10.1/b', 'doi:10.1/a']);
+  });
+
+  class FakeZotero implements ZoteroLike {
+    calls: string[] = [];
+    created: ZoteroItemData[] = [];
+    /** DOI that findByDoi should report as already in the library. */
+    existingDoi: string | null = null;
+    async keyInfo(): Promise<ZoteroKeyInfo> {
+      this.calls.push('keyInfo');
+      return { userID: 12345, username: 'anoop', canWrite: true };
+    }
+    searchResult: ZoteroItem[] = [];
+    failSearch: unknown = null;
+    async searchItems(userId: string, q: string): Promise<ZoteroItem[]> {
+      this.calls.push(`search:${userId}:${q}`);
+      if (this.failSearch) throw this.failSearch;
+      return this.searchResult;
+    }
+    async findByDoi(_userId: string, doi: string): Promise<ZoteroItem | null> {
+      this.calls.push(`findByDoi:${doi}`);
+      return this.existingDoi === doi ? { key: 'EXIST123', version: 1, data: { itemType: 'journalArticle', DOI: doi } } : null;
+    }
+    async collections(): Promise<ZoteroCollection[]> {
+      this.calls.push('collections');
+      return [{ key: 'C1', name: 'ML', parentCollection: false }];
+    }
+    async createItem(_userId: string, item: ZoteroItemData): Promise<{ key: string }> {
+      this.calls.push('create');
+      this.created.push(item);
+      return { key: 'NEW12345' };
+    }
+  }
+  const zoteroSettings = { zoteroApiKey: 'zk', zoteroUserId: '12345', zoteroUsername: 'anoop' };
+  const zItem = (data: Partial<ZoteroItemData>): ZoteroItem => ({ key: 'I1', version: 1, data: { itemType: 'journalArticle', ...data } });
+
+  it('zoteroSave with a remembered collection files the item there', async () => {
+    const fake = new FakeZotero();
+    const store = make({ zotero: fake, settings: { ...zoteroSettings, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML', autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(fake.calls).toContain('findByDoi:10.1/s');
+    expect(fake.created).toHaveLength(1);
+    expect(fake.created[0]!.collections).toEqual(['C1']);
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('NEW12345');
+    expect(store.getState().toasts.at(-1)!.text).toBe('Added to Zotero');
+    // A second save is a no-op.
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(fake.created).toHaveLength(1);
+  });
+
+  it('first zoteroSave asks for a collection, then choosing one persists it and completes the save', async () => {
+    const fake = new FakeZotero();
+    const store = make({ zotero: fake, settings: { ...zoteroSettings, autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(store.getState().zotero).toMatchObject({ savePendingId: 'doi:10.1/s', collectionDialogOpen: true });
+    expect(fake.created).toHaveLength(0);
+    await settle();
+    expect(store.getState().zotero.collections).toEqual([{ key: 'C1', name: 'ML', parentCollection: false }]);
+    store.getState().zoteroChooseCollection('C1', 'ML');
+    await settle();
+    expect(store.getState().settings).toMatchObject({ zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML' });
+    expect(store.getState().zotero).toMatchObject({ savePendingId: null, collectionDialogOpen: false });
+    expect(fake.created).toHaveLength(1);
+  });
+
+  it('zoteroSave skips papers already in the library', async () => {
+    const fake = new FakeZotero();
+    fake.existingDoi = '10.1/s';
+    const store = make({ zotero: fake, settings: { ...zoteroSettings, zoteroCollectionKey: '', zoteroCollectionName: 'My Library', autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(fake.created).toHaveLength(0);
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('EXIST123');
+    expect(store.getState().toasts.at(-1)!.text).toBe('Already in your Zotero library');
+  });
+
+  it('seedFromZoteroItem seeds directly from an identifier without a title search', async () => {
+    const store = make({ zotero: new FakeZotero(), settings: { ...zoteroSettings, autoExpandSeeds: false } });
+    await store.getState().seedFromZoteroItem(zItem({ DOI: '10.1234/xyz' }));
+    expect(store.getState().seeds.map((s) => s.lookup)).toEqual(['DOI:10.1234/xyz']);
+    expect(s2.calls.filter((c) => c.startsWith('search:'))).toEqual([]);
+    expect(oa.calls.filter((c) => c.startsWith('search:'))).toEqual([]);
+  });
+
+  it('seedFromZoteroItem falls back to a title search for items without identifiers', async () => {
+    const store = make({ zotero: new FakeZotero(), settings: { ...zoteroSettings, autoExpandSeeds: false } });
+    await store.getState().seedFromZoteroItem(zItem({ title: 'Paper A' }));
+    await settle();
+    const s = store.getState();
+    expect(s.seeds).toHaveLength(1);
+    expect(s.seeds[0]!.paperId).toBe('doi:10.1/a');
+    expect(s.toasts.some((t) => t.text.startsWith('Matched by title'))).toBe(true);
+  });
+
+  it('zoteroSearch prefers the local Zotero app and falls back to the web API', async () => {
+    const local = new FakeZotero();
+    const web = new FakeZotero();
+    local.searchResult = [zItem({ title: 'Local hit' })];
+    const store = make({ zotero: web, zoteroLocal: local, settings: zoteroSettings });
+    const items = await store.getState().zoteroSearch('attention');
+    expect(items[0]!.data.title).toBe('Local hit');
+    expect(local.calls).toEqual(['search:0:attention']);
+    expect(web.calls).toEqual([]);
+    expect(store.getState().zotero.searchSource).toBe('local');
+
+    local.failSearch = new Error('connection refused');
+    await store.getState().zoteroSearch('attention');
+    expect(web.calls).toEqual(['search:12345:attention']);
+    expect(store.getState().zotero.searchSource).toBe('web');
+  });
+
+  it('searchPapers fills the Zotero section alongside provider results', async () => {
+    const local = new FakeZotero();
+    local.searchResult = [zItem({ title: 'Local match' })];
+    const store = make({ zoteroLocal: local });
+    await store.getState().searchPapers('graph');
+    await settle();
+    const s = store.getState().search!;
+    expect(s.status).toBe('ready');
+    expect(s.ids.length).toBeGreaterThan(0);
+    expect(s.zotero).toMatchObject({ status: 'ready' });
+    expect(s.zotero!.items).toHaveLength(1);
+  });
+
+  it('searchPapers drops the Zotero section silently when local fails and no key is set', async () => {
+    const local = new FakeZotero();
+    local.failSearch = new Error('ECONNREFUSED');
+    const store = make({ zoteroLocal: local });
+    await store.getState().searchPapers('graph');
+    await settle();
+    expect(store.getState().search!.zotero).toBeUndefined();
+  });
+
+  it('searchPapers surfaces a Zotero error when a key is configured', async () => {
+    const local = new FakeZotero();
+    local.failSearch = new Error('boom');
+    const web = new FakeZotero();
+    web.failSearch = new Error('web down');
+    const store = make({ zotero: web, zoteroLocal: local, settings: zoteroSettings });
+    await store.getState().searchPapers('graph');
+    await settle();
+    expect(store.getState().search!.zotero).toMatchObject({ status: 'error' });
+  });
+
+  it('previewZoteroSearch shows local results as you type, leaving the web part idle', async () => {
+    const local = new FakeZotero();
+    local.searchResult = [zItem({ title: 'Local match' })];
+    const web = new FakeZotero();
+    const store = make({ zotero: web, zoteroLocal: local, settings: zoteroSettings });
+    await store.getState().previewZoteroSearch('atten');
+    const s = store.getState().search!;
+    expect(s).toMatchObject({ query: 'atten', status: 'idle' });
+    expect(s.zotero).toMatchObject({ status: 'ready' });
+    expect(s.zotero!.items).toHaveLength(1);
+    // Typing must never hit the web APIs — neither Zotero's nor the metadata providers'.
+    expect(web.calls).toEqual([]);
+    expect(s2.calls.filter((c) => c.startsWith('search:'))).toEqual([]);
+    expect(oa.calls.filter((c) => c.startsWith('search:'))).toEqual([]);
+    // Clearing the input clears the preview panel.
+    await store.getState().previewZoteroSearch('');
+    expect(store.getState().search).toBeNull();
+  });
+
+  it('previewZoteroSearch never disturbs submitted results and clears a failed preview silently', async () => {
+    const local = new FakeZotero();
+    const store = make({ zoteroLocal: local });
+    await store.getState().searchPapers('graph');
+    await settle();
+    await store.getState().previewZoteroSearch('');
+    expect(store.getState().search).not.toBeNull();
+
+    local.failSearch = new Error('closed');
+    const fresh = make({ zoteroLocal: local });
+    await fresh.getState().previewZoteroSearch('graph');
+    expect(fresh.getState().search).toBeNull();
+  });
+
+  it('zoteroSearch explains itself when neither local Zotero nor an API key is available', async () => {
+    const local = new FakeZotero();
+    local.failSearch = new Error('ECONNREFUSED');
+    const store = make({ zotero: new FakeZotero(), zoteroLocal: local });
+    await expect(store.getState().zoteroSearch('x')).rejects.toThrow(/start Zotero.*or add a Zotero API key/);
+  });
+
+  it('changing the Zotero API key clears the derived identity and re-verifies', async () => {
+    const fake = new FakeZotero();
+    const store = make({ zotero: fake, settings: { ...zoteroSettings, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML' } });
+    store.getState().updateSettings({ zoteroApiKey: 'other' });
+    await settle();
+    const s = store.getState();
+    expect(fake.calls).toContain('keyInfo');
+    expect(s.settings).toMatchObject({ zoteroApiKey: 'other', zoteroUserId: '12345', zoteroUsername: 'anoop', zoteroCollectionKey: '', zoteroCollectionName: '' });
+    expect(s.zotero.status).toBe('ready');
+    store.getState().updateSettings({ zoteroApiKey: '' });
+    expect(store.getState().settings.zoteroUserId).toBe('');
+    expect(store.getState().zotero.status).toBe('idle');
   });
 });

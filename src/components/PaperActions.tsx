@@ -21,6 +21,9 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const ensureDetail = useAppStore((s) => s.ensureDetail);
   const pushToast = useAppStore((s) => s.pushToast);
   const expandNode = useAppStore((s) => s.expandNode);
+  const zoteroSave = useAppStore((s) => s.zoteroSave);
+  const zoteroEnabled = useAppStore((s) => !!s.settings.zoteroApiKey);
+  const zoteroSaved = useAppStore((s) => !!s.zotero.savedKeys[paper.paperId]);
   const expanded = useAppStore((s) => (s.graphVersion, s.graph.getNode(paper.paperId)?.expanded ?? false));
   const expanding = useIsExpanding(paper.paperId);
   const [busy, setBusy] = useState<string | null>(null);
@@ -61,6 +64,24 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
           {doi && (
             <button className={size} onClick={() => copy('doi')} title={`Copy ${doi}`}>
               <Icon name="link" /> DOI
+            </button>
+          )}
+          {zoteroEnabled && (
+            <button
+              className={size}
+              onClick={async () => {
+                setBusy('zotero');
+                try {
+                  await zoteroSave(paper.paperId);
+                } finally {
+                  setBusy(null);
+                }
+              }}
+              disabled={busy === 'zotero' || zoteroSaved}
+              title={zoteroSaved ? 'In your Zotero library' : 'Save this paper to your Zotero library'}
+            >
+              {zoteroSaved ? <Icon name="check" /> : busy === 'zotero' ? <span className="spinner" /> : <Icon name="bookmark" />}
+              {zoteroSaved ? ' In Zotero' : ' Zotero'}
             </button>
           )}
         </>

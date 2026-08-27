@@ -28,6 +28,11 @@ export function sanitizeSettings(input: Partial<Settings> | null | undefined): S
     theme: oneOf(s.theme, ['system', 'light', 'dark'] as const, DEFAULT_SETTINGS.theme),
     sortKey: oneOf(s.sortKey, ['year', 'citationCount', 'referenceCount', 'influentialCitationCount'] as const, DEFAULT_SETTINGS.sortKey),
     sortDir: oneOf(s.sortDir, ['asc', 'desc'] as const, DEFAULT_SETTINGS.sortDir),
+    zoteroApiKey: typeof s.zoteroApiKey === 'string' ? s.zoteroApiKey.trim() : DEFAULT_SETTINGS.zoteroApiKey,
+    zoteroUserId: typeof s.zoteroUserId === 'string' ? s.zoteroUserId.trim() : DEFAULT_SETTINGS.zoteroUserId,
+    zoteroUsername: typeof s.zoteroUsername === 'string' ? s.zoteroUsername.trim() : DEFAULT_SETTINGS.zoteroUsername,
+    zoteroCollectionKey: typeof s.zoteroCollectionKey === 'string' ? s.zoteroCollectionKey.trim() : DEFAULT_SETTINGS.zoteroCollectionKey,
+    zoteroCollectionName: typeof s.zoteroCollectionName === 'string' ? s.zoteroCollectionName.trim() : DEFAULT_SETTINGS.zoteroCollectionName,
   };
 }
 

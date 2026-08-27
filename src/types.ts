@@ -131,6 +131,16 @@ export interface Settings {
   theme: Theme;
   sortKey: SortKey;
   sortDir: SortDir;
+  /** Zotero Web API key (optional; needs library read + write). */
+  zoteroApiKey: string;
+  /** Zotero userID discovered from the key (cached; cleared when the key changes). */
+  zoteroUserId: string;
+  /** Zotero username, display only. */
+  zoteroUsername: string;
+  /** Remembered save-target collection ('' = library root). */
+  zoteroCollectionKey: string;
+  /** Display name of the save target; '' = not chosen yet (first save asks). */
+  zoteroCollectionName: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -145,6 +155,11 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   sortKey: 'citationCount',
   sortDir: 'desc',
+  zoteroApiKey: '',
+  zoteroUserId: '',
+  zoteroUsername: '',
+  zoteroCollectionKey: '',
+  zoteroCollectionName: '',
 };
 
 export const S2_WEB = 'https://www.semanticscholar.org';

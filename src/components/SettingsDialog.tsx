@@ -9,9 +9,14 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const settings = useAppStore((s) => s.settings);
   const update = useAppStore((s) => s.updateSettings);
   const clearCache = useAppStore((s) => s.clearCache);
+  const zotero = useAppStore((s) => s.zotero);
+  const verifyZotero = useAppStore((s) => s.zoteroVerifyKey);
+  const openCollections = useAppStore((s) => s.zoteroOpenCollectionDialog);
   const [key, setKey] = useState(settings.apiKey);
   const [showKey, setShowKey] = useState(false);
   const [email, setEmail] = useState(settings.openalexEmail);
+  const [zKey, setZKey] = useState(settings.zoteroApiKey);
+  const [showZKey, setShowZKey] = useState(false);
 
   useEffect(() => {
     const d = ref.current;
@@ -19,15 +24,24 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
     if (open && !d.open) {
       setKey(settings.apiKey);
       setEmail(settings.openalexEmail);
+      setZKey(settings.zoteroApiKey);
       d.showModal();
     } else if (!open && d.open) d.close();
-  }, [open, settings.apiKey, settings.openalexEmail]);
+  }, [open, settings.apiKey, settings.openalexEmail, settings.zoteroApiKey]);
+
+  // Show the connection status for a key restored from a previous session.
+  useEffect(() => {
+    if (open && settings.zoteroApiKey && zotero.status === 'idle') void verifyZotero();
+  }, [open, settings.zoteroApiKey, zotero.status, verifyZotero]);
 
   const commitKey = () => {
     if (key.trim() !== settings.apiKey) update({ apiKey: key.trim() });
   };
   const commitEmail = () => {
     if (email.trim() !== settings.openalexEmail) update({ openalexEmail: email.trim() });
+  };
+  const commitZKey = () => {
+    if (zKey.trim() !== settings.zoteroApiKey) update({ zoteroApiKey: zKey.trim() });
   };
 
   return (
@@ -92,6 +106,36 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={commitEmail} placeholder="you@example.org — joins OpenAlex's faster “polite pool”" autoComplete="off" spellCheck={false} />
           <span className="faint small">Sent only to OpenAlex as the <code>mailto</code> parameter. Leave empty to use the anonymous pool.</span>
         </label>
+
+        <div className="field">
+          <span>Zotero API key <span className="faint">(optional)</span></span>
+          <div className="row">
+            <input className="input mono" type={showZKey ? 'text' : 'password'} value={zKey} onChange={(e) => setZKey(e.target.value)} onBlur={commitZKey} placeholder="Connect your Zotero library" aria-label="Zotero API key" autoComplete="off" spellCheck={false} />
+            <button className="btn icon" onClick={() => setShowZKey((v) => !v)} title={showZKey ? 'Hide' : 'Show'} aria-label={showZKey ? 'Hide Zotero API key' : 'Show Zotero API key'} aria-pressed={showZKey}><Icon name="eye" /></button>
+          </div>
+          <span className="faint small">
+            Enables searching your library and saving papers to it. Create a key with library read and write access at{' '}
+            <a href="https://www.zotero.org/settings/keys/new" target="_blank" rel="noopener noreferrer">zotero.org/settings/keys</a>. Stored only in this browser.
+          </span>
+          {settings.zoteroApiKey && zotero.status === 'checking' && (
+            <span className="faint small"><span className="spinner" /> Checking key…</span>
+          )}
+          {settings.zoteroApiKey && zotero.status === 'error' && (
+            <span className="error-text small"><Icon name="alert" size={13} /> {zotero.error}</span>
+          )}
+          {settings.zoteroApiKey && zotero.status !== 'checking' && zotero.status !== 'error' && (zotero.username || settings.zoteroUsername) && (
+            <span className="faint small">
+              <Icon name="check" size={13} /> Connected as <strong>{zotero.username || settings.zoteroUsername}</strong>
+              {zotero.status === 'ready' && !zotero.canWrite && ' — this key has no write access, so saving will fail'}
+            </span>
+          )}
+          {settings.zoteroApiKey && (
+            <div className="row">
+              <span className="faint small">Saving to: <strong>{settings.zoteroCollectionName || 'ask on first save'}</strong></span>
+              <button className="btn sm" onClick={openCollections}>Change…</button>
+            </div>
+          )}
+        </div>
 
         <label className="field">
           <span>References / citations fetched per paper: <strong>{settings.listLimit}</strong></span>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { SeedPanel } from './components/SeedPanel';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Toasts } from './components/Toast';
+import { ZoteroCollectionDialog } from './components/ZoteroCollectionDialog';
 import { Icon, Logo } from './components/icons';
 import { GraphPanel } from './graph/GraphPanel';
 import { useTheme } from './hooks/useTheme';
@@ -16,14 +17,15 @@ export function App() {
   const [tab, setTab] = useState<Tab>('cards');
   const update = useAppStore((s) => s.updateSettings);
   const select = useAppStore((s) => s.select);
+  const zoteroDialogOpen = useAppStore((s) => s.zotero.collectionDialogOpen);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !settingsOpen) select(null);
+      if (e.key === 'Escape' && !settingsOpen && !zoteroDialogOpen) select(null);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [select, settingsOpen]);
+  }, [select, settingsOpen, zoteroDialogOpen]);
 
   return (
     <div className="app" data-tab={tab}>
@@ -44,6 +46,7 @@ export function App() {
         <GraphPanel themeKey={resolved} tab={tab} onTab={setTab} />
       </main>
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <ZoteroCollectionDialog />
       <Toasts />
     </div>
   );

@@ -32,6 +32,8 @@ const PATHS = {
   info: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v5M12 8v.5',
   sidebar: 'M4 5h16v14H4zM9 5v14',
   tag: 'M4 4h7l9 9-7 7-9-9zM8 8h.01',
+  bookmark: 'M6 3h12v18l-6-4.5L6 21z',
+  folder: 'M3 5h6l2 2h10v12H3z',
 } as const;
 
 export type IconName = keyof typeof PATHS;

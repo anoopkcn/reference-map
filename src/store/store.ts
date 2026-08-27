@@ -5,6 +5,8 @@ import { hasUnicodeReplacement, mergePaper } from '../api/normalize';
 import { PRIORITY } from '../api/provider';
 import { AUTH_QUEUE, UNAUTH_QUEUE } from '../api/queue';
 import type { ProviderStatus, Router } from '../api/router';
+import { lookupFromZoteroItem, paperToZoteroItem, ZOTERO_LOCAL_USER, type ZoteroCollection, type ZoteroItem, type ZoteroLike } from '../api/zotero';
+import { truncate } from '../lib/format';
 import { Identity, lookupToAliasKey } from '../lib/identity';
 import { lookupKey } from '../lib/ids';
 import { DEFAULT_SETTINGS, type ListKind, type ListState, type LoadStatus, type Lookup, type Paper, type PaperId, type ProviderId, type Seed, type Settings } from '../types';
@@ -17,6 +19,13 @@ export interface Toast {
   kind: 'info' | 'error';
 }
 
+/** The Zotero-library half of a title search (absent when no Zotero source is configured). */
+export interface SearchZoteroState {
+  status: LoadStatus;
+  items: ZoteroItem[];
+  error?: string;
+}
+
 export interface SearchState {
   query: string;
   status: LoadStatus;
@@ -24,12 +33,31 @@ export interface SearchState {
   total: number | null;
   error?: string;
   provider?: ProviderId;
+  zotero?: SearchZoteroState;
 }
 
 export interface ListsEntry {
   refs?: ListState;
   cites?: ListState;
   related?: ListState;
+}
+
+export interface ZoteroState {
+  /** API-key verification. */
+  status: 'idle' | 'checking' | 'ready' | 'error';
+  error?: string;
+  username: string;
+  canWrite: boolean;
+  /** Paper waiting for a collection choice before its first save. */
+  savePendingId: PaperId | null;
+  collectionDialogOpen: boolean;
+  collections: ZoteroCollection[] | null;
+  collectionsStatus: LoadStatus;
+  collectionsError?: string;
+  /** Session-only: papers saved (or found) in Zotero, by their item key. */
+  savedKeys: Record<PaperId, string>;
+  /** Where the last successful picker search was answered from. */
+  searchSource: 'local' | 'web' | null;
 }
 
 export interface AppState {
@@ -48,6 +76,7 @@ export interface AppState {
   providers: Record<ProviderId, ProviderStatus>;
   settings: Settings;
   toasts: Toast[];
+  zotero: ZoteroState;
 
   addSeeds(lookups: readonly Lookup[]): Promise<void>;
   removeSeed(lookup: Lookup): void;
@@ -57,6 +86,12 @@ export interface AppState {
   refreshSeed(lookup: Lookup): Promise<void>;
   ensureDetail(id: PaperId): Promise<Paper | undefined>;
   searchPapers(query: string): Promise<void>;
+  /**
+   * As-you-type search of the LOCAL Zotero library only (never the web APIs).
+   * Owns preview panels (search.status 'idle'); never touches submitted results.
+   * An empty/short query clears the preview panel.
+   */
+  previewZoteroSearch(query: string): Promise<void>;
   clearSearch(): void;
   select(id: PaperId | null): void;
   selectPrevious(): void;
@@ -70,6 +105,20 @@ export interface AppState {
   clearCache(): Promise<void>;
   pushToast(text: string, kind?: Toast['kind'], ms?: number): void;
   dismissToast(id: number): void;
+
+  /** Verify the configured Zotero API key and cache its userID/username. */
+  zoteroVerifyKey(): Promise<boolean>;
+  /** Quick-search the user's Zotero library (verifies the key first if needed). */
+  zoteroSearch(query: string, signal?: AbortSignal): Promise<ZoteroItem[]>;
+  /** Seed the map from a picked Zotero item; falls back to a title search when it has no identifier. */
+  seedFromZoteroItem(item: ZoteroItem): Promise<void>;
+  /** Save a paper to Zotero; the first save asks for a target collection. */
+  zoteroSave(id: PaperId): Promise<void>;
+  zoteroOpenCollectionDialog(): void;
+  zoteroChooseCollection(key: string, name: string): void;
+  zoteroCancelCollection(): void;
+  /** (Re)load the collection list for the dialog; no-op while loading or already loaded. */
+  zoteroLoadCollections(): Promise<void>;
 }
 
 export interface StoreDeps {
@@ -82,6 +131,9 @@ export interface StoreDeps {
   toastMs?: number;
   /** Delays before automatically retrying a seed that failed transiently; [] disables. */
   seedRetryDelays?: readonly number[];
+  zotero?: ZoteroLike;
+  /** Read-only client for the running Zotero app's local API; tried before `zotero` for searches. */
+  zoteroLocal?: ZoteroLike;
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -97,6 +149,9 @@ const BATCH_THRESHOLD = 3;
 
 export function createAppStore(deps: StoreDeps) {
   const { router, identity } = deps;
+  const zotero = deps.zotero;
+  const zoteroLocal = deps.zoteroLocal;
+  let zoteroVerifyPromise: Promise<boolean> | null = null;
   let cache = deps.cache;
   let cacheReady: Promise<void> = Promise.resolve();
   const now = deps.now ?? (() => Date.now());
@@ -110,6 +165,7 @@ export function createAppStore(deps: StoreDeps) {
   const seedRetryAttempts = new Map<string, number>();
   const seedRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let searchCtrl: AbortController | null = null;
+  let zoteroPreviewCtrl: AbortController | null = null;
   let toastSeq = 0;
   let settingsTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -264,6 +320,64 @@ export function createAppStore(deps: StoreDeps) {
       seedRetryTimers.set(key, timer);
     };
 
+    const initialZotero = (): ZoteroState => ({
+      status: 'idle',
+      username: '',
+      canWrite: false,
+      savePendingId: null,
+      collectionDialogOpen: false,
+      collections: null,
+      collectionsStatus: 'idle',
+      savedKeys: {},
+      searchSource: null,
+    });
+
+    const setZotero = (patch: Partial<ZoteroState>): void => set({ zotero: { ...get().zotero, ...patch } });
+
+    /** userID for API calls, verifying the key first when it isn't cached yet. */
+    const zoteroUserId = async (): Promise<string> => {
+      if (!get().settings.zoteroUserId) await get().zoteroVerifyKey();
+      const id = get().settings.zoteroUserId;
+      if (!id) throw new Error(get().zotero.error ?? 'Zotero API key not verified');
+      return id;
+    };
+
+    const loadZoteroCollections = async (): Promise<void> => {
+      if (!zotero) return;
+      const z = get().zotero;
+      if (z.collectionsStatus === 'loading' || z.collections) return;
+      setZotero({ collectionsStatus: 'loading', collectionsError: undefined });
+      try {
+        const collections = await zotero.collections(await zoteroUserId());
+        setZotero({ collections, collectionsStatus: 'ready' });
+      } catch (e) {
+        setZotero({ collectionsStatus: 'error', collectionsError: describeError(e) });
+      }
+    };
+
+    const performZoteroSave = async (id: PaperId): Promise<void> => {
+      if (!zotero) return;
+      try {
+        const userId = await zoteroUserId();
+        const p = (await get().ensureDetail(id)) ?? get().papers.get(id);
+        if (!p) return;
+        const doi = p.externalIds.DOI;
+        if (doi) {
+          const existing = await zotero.findByDoi(userId, doi);
+          if (existing) {
+            setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: existing.key } });
+            get().pushToast('Already in your Zotero library');
+            return;
+          }
+        }
+        const saved = await zotero.createItem(userId, paperToZoteroItem(p, get().settings.zoteroCollectionKey));
+        setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: saved.key } });
+        get().pushToast('Added to Zotero');
+      } catch (e) {
+        if (!isAbort(e)) get().pushToast(describeError(e), 'error');
+      }
+    };
+
     return {
       papers: new Map(),
       seeds: [],
@@ -279,6 +393,7 @@ export function createAppStore(deps: StoreDeps) {
       providers: router.status(),
       settings: initialSettings,
       toasts: [],
+      zotero: initialZotero(),
 
       async addSeeds(lookups) {
         const seen = new Set(get().seeds.map((s) => lookupKey(s.lookup)));
@@ -588,27 +703,77 @@ export function createAppStore(deps: StoreDeps) {
       async searchPapers(query) {
         const q = query.trim();
         searchCtrl?.abort();
+        zoteroPreviewCtrl?.abort();
         if (!q) {
           set({ search: null });
           return;
         }
         const ctrl = new AbortController();
         searchCtrl = ctrl;
-        set({ search: { query: q, status: 'loading', ids: [], total: null } });
+        const zoteroAvailable = !!zoteroLocal || (!!zotero && !!get().settings.zoteroApiKey);
+        set({ search: { query: q, status: 'loading', ids: [], total: null, zotero: zoteroAvailable ? { status: 'loading', items: [] } : undefined } });
+        const patch = (p: Partial<SearchState>): void => {
+          const cur = get().search;
+          if (ctrl.signal.aborted || !cur || cur.query !== q) return;
+          set({ search: { ...cur, ...p } });
+        };
+        // The Zotero library and the metadata providers answer independently; whichever is first renders first.
+        if (zoteroAvailable) {
+          void (async () => {
+            try {
+              const items = await get().zoteroSearch(q, ctrl.signal);
+              patch({ zotero: { status: 'ready', items } });
+            } catch (e) {
+              if (isAbort(e)) return;
+              // Without a key the user never opted into Zotero — drop the section instead of nagging.
+              patch({ zotero: get().settings.zoteroApiKey ? { status: 'error', items: [], error: describeError(e) } : undefined });
+            }
+          })();
+        }
         try {
           const r = await router.search(q, 10, { signal: ctrl.signal, priority: PRIORITY.search });
           if (ctrl.signal.aborted) return;
           upsertPapers(r.papers);
-          set({ search: { query: q, status: 'ready', ids: dedupe(r.papers.map((p) => p.paperId)), total: r.total, provider: r.provider } });
+          patch({ status: 'ready', ids: dedupe(r.papers.map((p) => p.paperId)), total: r.total, provider: r.provider });
         } catch (e) {
           if (ctrl.signal.aborted || isAbort(e)) return;
-          set({ search: { query: q, status: 'error', ids: [], total: null, error: describeError(e) } });
+          patch({ status: 'error', ids: [], total: null, error: describeError(e) });
+        }
+      },
+
+      async previewZoteroSearch(query) {
+        const q = query.trim();
+        zoteroPreviewCtrl?.abort();
+        zoteroPreviewCtrl = null;
+        const cur = get().search;
+        if (!zoteroLocal || q.length < 2) {
+          if (cur?.status === 'idle') set({ search: null });
+          return;
+        }
+        const ctrl = new AbortController();
+        zoteroPreviewCtrl = ctrl;
+        // Keep the previous preview's rows visible while the next keystroke's answer loads.
+        const carried = cur?.status === 'idle' && cur.zotero ? cur.zotero.items : [];
+        set({ search: { query: q, status: 'idle', ids: [], total: null, zotero: { status: 'loading', items: carried } } });
+        try {
+          const items = await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, q, { limit: 20, signal: ctrl.signal });
+          const now = get().search;
+          if (ctrl.signal.aborted || now?.query !== q || now.status !== 'idle') return;
+          set({ search: { ...now, zotero: { status: 'ready', items } } });
+          setZotero({ searchSource: 'local' });
+        } catch (e) {
+          if (ctrl.signal.aborted || isAbort(e)) return;
+          // Best-effort: no running Zotero, no preview.
+          const now = get().search;
+          if (now?.query === q && now.status === 'idle') set({ search: null });
         }
       },
 
       clearSearch() {
         searchCtrl?.abort();
+        zoteroPreviewCtrl?.abort();
         searchCtrl = null;
+        zoteroPreviewCtrl = null;
         set({ search: null });
       },
 
@@ -662,6 +827,11 @@ export function createAppStore(deps: StoreDeps) {
           saveSettings(get().settings);
         }, 150);
         if (next.apiKey !== prev.apiKey) router.providers.s2?.queue.configure(next.apiKey ? AUTH_QUEUE : UNAUTH_QUEUE);
+        if (next.zoteroApiKey !== prev.zoteroApiKey) {
+          // The cached identity and collection belong to the old key.
+          set({ settings: sanitizeSettings({ ...next, zoteroUserId: '', zoteroUsername: '', zoteroCollectionKey: '', zoteroCollectionName: '' }), zotero: initialZotero() });
+          if (next.zoteroApiKey) void get().zoteroVerifyKey();
+        }
       },
 
       async clearCache() {
@@ -677,6 +847,101 @@ export function createAppStore(deps: StoreDeps) {
       dismissToast(id) {
         const t = get().toasts;
         if (t.some((x) => x.id === id)) set({ toasts: t.filter((x) => x.id !== id) });
+      },
+
+      async zoteroVerifyKey() {
+        if (!zotero || !get().settings.zoteroApiKey) return false;
+        if (zoteroVerifyPromise) return zoteroVerifyPromise;
+        setZotero({ status: 'checking', error: undefined });
+        zoteroVerifyPromise = (async () => {
+          try {
+            const info = await zotero.keyInfo();
+            get().updateSettings({ zoteroUserId: String(info.userID), zoteroUsername: info.username });
+            setZotero({ status: 'ready', username: info.username, canWrite: info.canWrite });
+            return true;
+          } catch (e) {
+            setZotero({ status: 'error', error: describeError(e) });
+            return false;
+          } finally {
+            zoteroVerifyPromise = null;
+          }
+        })();
+        return zoteroVerifyPromise;
+      },
+
+      async zoteroSearch(query, signal) {
+        // Local first: keyless, instant, and sees not-yet-synced items. Any failure
+        // (Zotero closed, local API disabled, no proxy on a static deploy) falls through.
+        if (zoteroLocal) {
+          try {
+            const items = await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, query, { limit: 20, signal });
+            setZotero({ searchSource: 'local' });
+            return items;
+          } catch (e) {
+            if (isAbort(e)) throw e;
+          }
+        }
+        if (!zotero || !get().settings.zoteroApiKey) {
+          throw new Error('Zotero is not reachable — start Zotero and enable its local API (Settings → Advanced → “Allow other applications…”), or add a Zotero API key in Settings');
+        }
+        const items = await zotero.searchItems(await zoteroUserId(), query, { limit: 20, signal });
+        setZotero({ searchSource: 'web' });
+        return items;
+      },
+
+      async seedFromZoteroItem(item) {
+        const lookup = lookupFromZoteroItem(item);
+        if (lookup) {
+          // The optimistic seed card renders synchronously, so the picker can close right away.
+          void get().addSeeds([lookup]);
+          return;
+        }
+        const title = (item.data.title ?? '').trim();
+        if (!title) {
+          get().pushToast('This Zotero item has no identifier or title to match', 'error');
+          return;
+        }
+        try {
+          const r = await router.search(title, 5, { priority: PRIORITY.search });
+          const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+          const best = r.papers.find((p) => norm(p.title) === norm(title)) ?? r.papers[0];
+          if (!best) {
+            get().pushToast(`No match found for "${truncate(title, 60)}"`, 'error');
+            return;
+          }
+          upsertPapers([best]);
+          await get().addSeeds([best.paperId]);
+          get().pushToast(`Matched by title — verify: "${truncate(best.title, 60)}"`);
+        } catch (e) {
+          if (!isAbort(e)) get().pushToast(describeError(e), 'error');
+        }
+      },
+
+      async zoteroSave(id) {
+        if (!zotero || !get().settings.zoteroApiKey || get().zotero.savedKeys[id]) return;
+        if (get().settings.zoteroCollectionName === '') {
+          setZotero({ savePendingId: id, collectionDialogOpen: true });
+          void loadZoteroCollections();
+          return;
+        }
+        await performZoteroSave(id);
+      },
+
+      zoteroOpenCollectionDialog() {
+        setZotero({ collectionDialogOpen: true, savePendingId: null });
+        void loadZoteroCollections();
+      },
+      zoteroLoadCollections() {
+        return loadZoteroCollections();
+      },
+      zoteroChooseCollection(key, name) {
+        const pending = get().zotero.savePendingId;
+        get().updateSettings({ zoteroCollectionKey: key, zoteroCollectionName: name || 'My Library' });
+        setZotero({ collectionDialogOpen: false, savePendingId: null });
+        if (pending) void performZoteroSave(pending);
+      },
+      zoteroCancelCollection() {
+        setZotero({ collectionDialogOpen: false, savePendingId: null });
       },
     };
   });
