@@ -51,6 +51,7 @@ class Fake implements Provider {
   aborted = 0;
   corruptListText = false;
   batchAuthorName: string | null = null;
+  batchCapable = true;
   constructor(
     readonly id: ProviderId,
     private accept: RegExp,
@@ -63,6 +64,9 @@ class Fake implements Provider {
   }
   supportsList(kind: ListKind) {
     return kind !== 'related' || this.id === 'openalex';
+  }
+  supportsBatch() {
+    return this.batchCapable;
   }
   /** Like a real client: records latency on success and errors on failure in its own stats. */
   private async go<T>(label: string, make: () => T, o?: EnqueueOptions): Promise<T> {
@@ -261,6 +265,19 @@ describe('Router', () => {
     const res2 = await r.getBatch(['DOI:10.1/b', 'ARXIV:2'], 'list');
     expect(res2[0]?.sources.openalex).toBeDefined();
     expect(res2[1]).toBeNull();
+  });
+
+  it('getBatch prefers batch-capable providers; a decompose-only one still serves exclusive lookups and misses', async () => {
+    s2.batchCapable = false;
+    const r = make();
+    const res = await r.getBatch(['DOI:10.1/a', 'ARXIV:1'], 'list');
+    expect(res.map((p) => p?.paperId ?? null)).toEqual(['doi:10.1/a', 's2:arxiv:1']);
+    expect(oa.calls).toEqual(['batch:DOI:10.1/a']); // DOI skips S2 despite its tie-breaking rank
+    expect(s2.calls).toEqual(['batch:ARXIV:1']); // only S2 accepts arXiv ids
+    // OpenAlex fails → the decompose-only provider is still the fallback
+    oa.fail = new NetworkError();
+    const res2 = await r.getBatch(['DOI:10.1/b'], 'list');
+    expect(res2[0]?.sources.s2).toBeDefined();
   });
 
   it('getBatch hedges to the next provider when the primary is slow, then aborts the straggler', async () => {

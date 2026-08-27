@@ -68,6 +68,8 @@ export interface Provider {
   lookupFor(paper: Pick<Paper, 'sources' | 'externalIds'>): string | null;
   /** Whether this provider supplies the requested paper-list relationship. */
   supportsList(kind: ListKind): boolean;
+  /** Whether getBatch hits a true multi-lookup endpoint here; false means it decomposes into single requests, so the Router should prefer others. */
+  supportsBatch(): boolean;
   resolve(lookup: Lookup, level: DetailLevel, options?: EnqueueOptions): Promise<Paper>;
   getPaper(native: string, level: DetailLevel, options?: EnqueueOptions): Promise<Paper>;
   getList(native: string, kind: ListKind, limit: number, options?: EnqueueOptions): Promise<ListResult>;

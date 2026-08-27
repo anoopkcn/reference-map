@@ -136,7 +136,9 @@ export class Router {
     const unresolved = () => lookups.map((_, i) => i).filter((i) => results[i] === null);
 
     while (!o.signal?.aborted) {
-      const sorted = this.sortedProviders('batch');
+      // Stable partition: true batch endpoints first; a decompose-only provider (S2 in a
+      // browser, where CORS blocks POST /paper/batch) still takes lookups nobody else accepts.
+      const sorted = this.sortedProviders('batch').sort((a, b) => Number(b.supportsBatch()) - Number(a.supportsBatch()));
       const groups = new Map<Provider, number[]>();
       for (const i of unresolved()) {
         const p = sorted.find((pr) => !tried[i]!.has(pr.id) && pr.toNative(lookups[i]!) !== null);

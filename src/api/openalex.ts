@@ -244,6 +244,10 @@ export class OpenAlexClient implements Provider {
     return true;
   }
 
+  supportsBatch(): boolean {
+    return true; // batches are GET filter queries, fine cross-origin
+  }
+
   resolve(lookup: Lookup, level: DetailLevel = 'list', options: EnqueueOptions = {}): Promise<Paper> {
     const native = this.toNative(lookup);
     if (!native) return Promise.reject(new UnsupportedLookupError(lookup, 'openalex'));

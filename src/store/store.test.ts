@@ -63,6 +63,9 @@ class FakeProvider implements Provider {
   supportsList(kind: ListKind) {
     return kind !== 'related' || this.id === 'openalex';
   }
+  supportsBatch() {
+    return true;
+  }
   private async go<T>(label: string, make: () => T): Promise<T> {
     this.calls.push(label);
     if (this.fail) {

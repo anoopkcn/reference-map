@@ -202,6 +202,20 @@ describe('S2Client', () => {
     expect(f.calls[0]!.init!.method).toBe('POST');
     expect(JSON.parse(f.calls[0]!.init!.body as string)).toEqual({ ids: ['DOI:10.1/x', 'DOI:10.2/y'] });
     expect(await c.getBatch([])).toEqual([]);
+    expect(c.supportsBatch()).toBe(true); // node default: batch POST available
+  });
+
+  it('getBatch decomposes into per-id GETs when batch POST is unavailable (browser CORS)', async () => {
+    const f = mockFetch((u) => (u.includes('missing') ? { status: 404, body: { error: 'x' } } : { body: raw }));
+    const c = new S2Client({ queue: queue(), fetchFn: f.fn, canBatchPost: false });
+    expect(c.supportsBatch()).toBe(false);
+    const r = await c.getBatch(['DOI:10.1/x', 'DOI:missing', 'nonsense']);
+    expect(r[0]!.paperId).toBe('s2:abc');
+    expect(r[1]).toBeNull(); // 404 becomes a miss, not a rejection
+    expect(r[2]).toBeNull(); // unsupported lookup: no request at all
+    expect(f.calls.length).toBe(2);
+    expect(f.calls.every((call) => call.init?.method === undefined)).toBe(true);
+    expect(f.calls[0]!.url).toContain('/paper/DOI%3A10.1%2Fx?fields=');
   });
 
   it('search', async () => {

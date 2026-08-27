@@ -1,5 +1,5 @@
 import { S2_API, type DetailLevel, type ListKind, type Lookup, type Paper, type PaperId } from '../types';
-import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError } from './errors';
+import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError, isAbort } from './errors';
 import { DETAIL_FIELDS_PARAM, LIST_FIELDS_PARAM, S2_LIMITS } from './fields';
 import { normalizePaper, type S2PaperRaw } from './normalize';
 import { PRIORITY, ProviderStats, type ListResult, type OpKind, type Provider, type SearchResult } from './provider';
@@ -16,6 +16,11 @@ export interface S2ClientOptions {
   now?: () => number;
   /** Whether the machine believes it is online (default: navigator.onLine, true when unknown). */
   onLine?: () => boolean;
+  /**
+   * Whether POST /paper/batch is reachable. S2's CORS preflight only allows GET, so browsers
+   * can never use it; there getBatch decomposes into per-id GETs (default: true outside browsers).
+   */
+  canBatchPost?: boolean;
 }
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -32,6 +37,7 @@ export class S2Client implements Provider {
   private baseUrl: string;
   private now: () => number;
   private onLine: () => boolean;
+  private canBatchPost: boolean;
 
   constructor(opts: S2ClientOptions) {
     this.queue = opts.queue;
@@ -40,6 +46,7 @@ export class S2Client implements Provider {
     this.baseUrl = opts.baseUrl ?? S2_API;
     this.now = opts.now ?? (() => Date.now());
     this.onLine = opts.onLine ?? (() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+    this.canBatchPost = opts.canBatchPost ?? typeof window === 'undefined';
     this.stats = new ProviderStats(this.now);
   }
 
@@ -71,6 +78,10 @@ export class S2Client implements Provider {
 
   supportsList(kind: ListKind): boolean {
     return kind !== 'related';
+  }
+
+  supportsBatch(): boolean {
+    return this.canBatchPost;
   }
 
   resolve(lookup: Lookup, level: DetailLevel = 'list', options: EnqueueOptions = {}): Promise<Paper> {
@@ -121,9 +132,26 @@ export class S2Client implements Provider {
     return { ids, papers, hasMore: raw.next !== undefined && raw.next !== null, total: null };
   }
 
-  /** POST /paper/batch — up to 500 lookups; result aligned with input (null for misses / unsupported). */
+  /**
+   * POST /paper/batch — up to 500 lookups; result aligned with input (null for misses / unsupported).
+   * Where batch POST is unavailable (browsers), each lookup becomes one GET and failed slots are null.
+   */
   async getBatch(lookups: readonly Lookup[], level: DetailLevel = 'list', options: EnqueueOptions = {}): Promise<(Paper | null)[]> {
     if (lookups.length === 0) return [];
+    if (!this.canBatchPost) {
+      return Promise.all(
+        lookups.map(async (l) => {
+          const native = this.toNative(l);
+          if (!native) return null;
+          try {
+            return await this.getPaper(native, level, options, 'batch');
+          } catch (e) {
+            if (isAbort(e)) throw e;
+            return null;
+          }
+        }),
+      );
+    }
     if (lookups.length > S2_LIMITS.batch) {
       const out: (Paper | null)[] = [];
       for (let i = 0; i < lookups.length; i += S2_LIMITS.batch) {
