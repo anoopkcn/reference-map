@@ -98,6 +98,8 @@ export interface ZoteroClientOptions {
   /** Fixed base, or a getter so the base can follow a settings value (local bridge URL). */
   baseUrl?: string | (() => string);
   getApiKey: () => string;
+  /** Sent on every request. The local client uses this for Zotero's stock `Zotero-Allowed-Request` gate bypass. */
+  extraHeaders?: Record<string, string>;
 }
 
 const COLLECTION_PAGE = 100;
@@ -107,12 +109,14 @@ export class ZoteroClient implements ZoteroLike {
   private readonly fetchFn: typeof fetch;
   private readonly baseUrl: string | (() => string);
   private readonly getApiKey: () => string;
+  private readonly extraHeaders: Record<string, string>;
 
   constructor(options: ZoteroClientOptions) {
     this.queue = options.queue;
     this.fetchFn = options.fetchFn ?? ((...args) => fetch(...args));
     this.baseUrl = options.baseUrl ?? ZOTERO_API;
     this.getApiKey = options.getApiKey;
+    this.extraHeaders = options.extraHeaders ?? {};
   }
 
   private base(): string {
@@ -215,6 +219,7 @@ export class ZoteroClient implements ZoteroLike {
         const headers: Record<string, string> = {
           Accept: 'application/json',
           'Zotero-API-Version': '3',
+          ...this.extraHeaders,
           ...options.headers,
         };
         const apiKey = this.getApiKey();

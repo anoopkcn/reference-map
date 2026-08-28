@@ -19,6 +19,16 @@ export function App() {
   const update = useAppStore((s) => s.updateSettings);
   const select = useAppStore((s) => s.select);
   const zoteroDialogOpen = useAppStore((s) => s.zotero.collectionDialogOpen);
+  const probeLocal = useAppStore((s) => s.zoteroProbeLocal);
+  const zoteroLocalUp = useAppStore((s) => s.zotero.localAvailable);
+
+  // After the user approves access in Zotero (or starts Zotero), returning to this tab reconnects.
+  useEffect(() => {
+    if (zoteroLocalUp) return;
+    const onFocus = () => void probeLocal();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [zoteroLocalUp, probeLocal]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

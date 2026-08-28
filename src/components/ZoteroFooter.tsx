@@ -60,7 +60,7 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
         </button>
       </div>
       <p>Search your library while you type, and save papers (with PDFs) back into it.</p>
-      {localSupported ? (
+      {import.meta.env.DEV ? (
         <>
           <p>
             <strong>Local</strong> — keep the Zotero app running and enable “Allow other applications on this computer to
@@ -74,12 +74,13 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
       ) : (
         <>
           <p>
-            Create an API key at zotero.org (library read + write) and paste it in{' '}
-            <button className="linklike" onClick={onOpenSettings}>Settings</button>.
+            <strong>Local</strong> — install the{' '}
+            <a href="https://github.com/anoopkcn/reference-map/releases" target="_blank" rel="noopener noreferrer">Reference Map Connect</a>{' '}
+            plugin in Zotero, keep Zotero running, and approve this site when Zotero asks. Keyless and instant.
           </p>
-          <p className="faint">
-            To reach the Zotero desktop app from this hosted copy, run the bundled bridge (<code>node scripts/zotero-bridge.mjs</code>)
-            and set its URL in Settings — or run the app locally (<code>npm run dev</code>).
+          <p>
+            <strong>zotero.org</strong> — or create an API key (library read + write) and paste it in{' '}
+            <button className="linklike" onClick={onOpenSettings}>Settings</button>. Works without the plugin, via your synced library.
           </p>
         </>
       )}

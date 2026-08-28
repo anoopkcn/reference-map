@@ -1,0 +1,15 @@
+{
+  "addons": {
+    "reference-map-connect@anoopkcn": {
+      "updates": [
+        {
+          "version": "0.1.1",
+          "update_link": "https://github.com/anoopkcn/reference-map/releases/download/connect-v0.1.1/reference-map-connect.xpi",
+          "applications": {
+            "zotero": { "strict_min_version": "6.999", "strict_max_version": "10.*" }
+          }
+        }
+      ]
+    }
+  }
+}

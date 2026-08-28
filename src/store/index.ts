@@ -21,20 +21,30 @@ export const openalex = new OpenAlexClient({ queue: oaQueue, getMailto: () => ap
 export const router = new Router({ providers: [s2, openalex], identity, getMode: () => appStore.getState().settings.sourceMode });
 export const zoteroQueue = new RequestQueue({ concurrency: 2, minIntervalMs: 300 });
 export const zotero = new ZoteroClient({ queue: zoteroQueue, getApiKey: () => appStore.getState().settings.zoteroApiKey });
-// Route to the running Zotero app: the dev server's /zotero-local proxy, or — for hosted
-// copies — a user-run zotero-bridge (scripts/zotero-bridge.mjs) whose URL lives in settings.
-// With neither, localBase() is '' and every local feature self-disables (localSupported false).
+// Route to the running Zotero app, first match wins:
+//  1. an explicit zotero-bridge URL from settings (scripts/zotero-bridge.mjs),
+//  2. the dev server's /zotero-local proxy,
+//  3. Zotero itself at 127.0.0.1:23119 — works from hosted copies when the Reference Map
+//     Connect plugin is installed in Zotero (it adds CORS for origins the user approves);
+//     without it the startup probe fails silently and local features stay off.
 const initialSettings = loadSettings();
 let storeReady = false;
 const localBase = (): string => {
   // Store creation itself calls this (via zoteroLocalSupported) before `appStore` exists.
   const bridge = (storeReady ? appStore.getState().settings : initialSettings).zoteroLocalUrl;
   if (bridge) return bridge;
-  return import.meta.env.DEV ? ZOTERO_LOCAL_ROOT : '';
+  return import.meta.env.DEV ? ZOTERO_LOCAL_ROOT : 'http://127.0.0.1:23119';
 };
 // Same-machine reads: no retries so a closed Zotero fails instantly and the web API takes over.
 export const zoteroLocalQueue = new RequestQueue({ concurrency: 4, minIntervalMs: 0, maxRetries: 0, maxRateLimitRetries: 0 });
-export const zoteroLocal = new ZoteroClient({ queue: zoteroLocalQueue, baseUrl: () => `${localBase()}/api`, getApiKey: () => '' });
+// Zotero-Allowed-Request is Zotero's own opt-in header for browser requests; combined with the
+// Connect plugin's CORS consent it lets a hosted copy talk straight to 127.0.0.1:23119.
+export const zoteroLocal = new ZoteroClient({
+  queue: zoteroLocalQueue,
+  baseUrl: () => `${localBase()}/api`,
+  getApiKey: () => '',
+  extraHeaders: { 'Zotero-Allowed-Request': 'true' },
+});
 export const zoteroConnector = new ZoteroConnectorClient({ queue: zoteroLocalQueue, baseUrl: localBase });
 
 export const appStore = createAppStore({

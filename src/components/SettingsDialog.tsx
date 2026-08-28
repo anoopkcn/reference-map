@@ -119,10 +119,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             <button className="btn icon" onClick={() => setShowZKey((v) => !v)} title={showZKey ? 'Hide' : 'Show'} aria-label={showZKey ? 'Hide Zotero API key' : 'Show Zotero API key'} aria-pressed={showZKey}><Icon name="eye" /></button>
           </div>
           <span className="faint small">
-            {zotero.localSupported
-              ? "While the Zotero app is running on this computer, searching and saving work without a key. A key adds zotero.org access for when it isn't — "
-              : 'Enables searching your Zotero library and saving papers to it — '}
-            create one with library read and write access at{' '}
+            With Zotero connected locally (see the note at the bottom of the sidebar), searching and saving work without a key; a key adds
+            zotero.org access for when Zotero isn't running — create one with library read and write access at{' '}
             <a href="https://www.zotero.org/settings/keys/new" target="_blank" rel="noopener noreferrer">zotero.org/settings/keys</a>. Stored only in this browser.
           </span>
           {settings.zoteroApiKey && zotero.status === 'checking' && (

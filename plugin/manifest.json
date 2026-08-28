@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "Reference Map Connect",
+  "version": "0.1.1",
+  "description": "Lets websites you approve (e.g. your Reference Map instance) search this Zotero library and save items into it. Each origin must be explicitly allowed in a Zotero dialog.",
+  "author": "Anoop K. Chandran",
+  "homepage_url": "https://github.com/anoopkcn/reference-map",
+  "applications": {
+    "zotero": {
+      "id": "reference-map-connect@anoopkcn",
+      "update_url": "https://raw.githubusercontent.com/anoopkcn/reference-map/main/plugin/updates.json",
+      "strict_min_version": "6.999",
+      "strict_max_version": "10.*"
+    }
+  }
+}
