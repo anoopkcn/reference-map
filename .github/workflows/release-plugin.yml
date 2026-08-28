@@ -1,0 +1,41 @@
+name: Release Zotero plugin
+
+# Publishes dist/reference-map-connect.xpi as release `connect-v<version>` whenever the
+# version in plugin/manifest.json changes on main. The tag name must match the
+# update_link in plugin/updates.json, which Zotero polls for plugin updates.
+on:
+  push:
+    branches: [main]
+    paths: ['plugin/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Read plugin version
+        id: version
+        run: echo "version=$(python3 -c "import json; print(json.load(open('plugin/manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Build .xpi
+        run: cd plugin && mkdir -p ../dist && zip -j ../dist/reference-map-connect.xpi manifest.json bootstrap.js
+
+      - name: Create release if this version has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="connect-v${{ steps.version.outputs.version }}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists — nothing to do."
+          else
+            gh release create "$tag" dist/reference-map-connect.xpi \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Reference Map Connect ${{ steps.version.outputs.version }}" \
+              --notes "Zotero plugin that lets approved websites (e.g. your Reference Map instance) search this Zotero library and save items into it. Install in Zotero via Tools → Plugins → gear menu → Install Plugin From File."
+          fi

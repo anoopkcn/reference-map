@@ -3,6 +3,7 @@ import { useAppStore } from '../store';
 import { Icon } from './icons';
 
 const DISMISS_KEY = 'refmap.zoteroHintDismissed';
+const PLUGIN_URL = 'https://github.com/anoopkcn/reference-map/releases';
 
 function isDismissed(): boolean {
   try {
@@ -70,12 +71,16 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
             <strong>zotero.org</strong> — create an API key (library read + write) and paste it in{' '}
             <button className="linklike" onClick={onOpenSettings}>Settings</button>, for when the app isn’t running.
           </p>
+          <p className="faint">
+            Hosted copies of this app connect via the{' '}
+            <a href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a> Zotero plugin.
+          </p>
         </>
       ) : (
         <>
           <p>
             <strong>Local</strong> — install the{' '}
-            <a href="https://github.com/anoopkcn/reference-map/releases" target="_blank" rel="noopener noreferrer">Reference Map Connect</a>{' '}
+            <a href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a>{' '}
             plugin in Zotero, keep Zotero running, and approve this site when Zotero asks. Keyless and instant.
           </p>
           <p>
