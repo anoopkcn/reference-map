@@ -31,7 +31,6 @@ export function sanitizeSettings(input: Partial<Settings> | null | undefined): S
     zoteroApiKey: typeof s.zoteroApiKey === 'string' ? s.zoteroApiKey.trim() : DEFAULT_SETTINGS.zoteroApiKey,
     zoteroUserId: typeof s.zoteroUserId === 'string' ? s.zoteroUserId.trim() : DEFAULT_SETTINGS.zoteroUserId,
     zoteroUsername: typeof s.zoteroUsername === 'string' ? s.zoteroUsername.trim() : DEFAULT_SETTINGS.zoteroUsername,
-    zoteroLocalUrl: typeof s.zoteroLocalUrl === 'string' ? s.zoteroLocalUrl.trim().replace(/\/+$/, '') : DEFAULT_SETTINGS.zoteroLocalUrl,
     zoteroCollectionKey: typeof s.zoteroCollectionKey === 'string' ? s.zoteroCollectionKey.trim() : DEFAULT_SETTINGS.zoteroCollectionKey,
     zoteroCollectionName: typeof s.zoteroCollectionName === 'string' ? s.zoteroCollectionName.trim() : DEFAULT_SETTINGS.zoteroCollectionName,
   };

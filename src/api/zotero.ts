@@ -95,8 +95,7 @@ interface ZoteroWriteResponse {
 export interface ZoteroClientOptions {
   queue: RequestQueue;
   fetchFn?: typeof fetch;
-  /** Fixed base, or a getter so the base can follow a settings value (local bridge URL). */
-  baseUrl?: string | (() => string);
+  baseUrl?: string;
   getApiKey: () => string;
   /** Sent on every request. The local client uses this for Zotero's stock `Zotero-Allowed-Request` gate bypass. */
   extraHeaders?: Record<string, string>;
@@ -107,7 +106,7 @@ const COLLECTION_PAGE = 100;
 export class ZoteroClient implements ZoteroLike {
   private readonly queue: RequestQueue;
   private readonly fetchFn: typeof fetch;
-  private readonly baseUrl: string | (() => string);
+  private readonly baseUrl: string;
   private readonly getApiKey: () => string;
   private readonly extraHeaders: Record<string, string>;
 
@@ -117,10 +116,6 @@ export class ZoteroClient implements ZoteroLike {
     this.baseUrl = options.baseUrl ?? ZOTERO_API;
     this.getApiKey = options.getApiKey;
     this.extraHeaders = options.extraHeaders ?? {};
-  }
-
-  private base(): string {
-    return typeof this.baseUrl === 'function' ? this.baseUrl() : this.baseUrl;
   }
 
   /** Who does this key belong to? `/keys/current` is what Zotero's own web library uses; older docs only list `/keys/<key>`. */
@@ -215,7 +210,7 @@ export class ZoteroClient implements ZoteroLike {
       key,
       async (signal) => {
         const qs = options.params ? `?${new URLSearchParams(options.params).toString()}` : '';
-        const url = `${this.base()}${path}${qs}`;
+        const url = `${this.baseUrl}${path}${qs}`;
         const headers: Record<string, string> = {
           Accept: 'application/json',
           'Zotero-API-Version': '3',
@@ -285,16 +280,12 @@ export interface ZoteroConnectorLike {
 export class ZoteroConnectorClient implements ZoteroConnectorLike {
   private readonly queue: RequestQueue;
   private readonly fetchFn: typeof fetch;
-  private readonly baseUrl: string | (() => string);
+  private readonly baseUrl: string;
 
-  constructor(options: { queue: RequestQueue; fetchFn?: typeof fetch; baseUrl?: string | (() => string) }) {
+  constructor(options: { queue: RequestQueue; fetchFn?: typeof fetch; baseUrl?: string }) {
     this.queue = options.queue;
     this.fetchFn = options.fetchFn ?? ((...args) => fetch(...args));
     this.baseUrl = options.baseUrl ?? ZOTERO_LOCAL_ROOT;
-  }
-
-  private base(): string {
-    return typeof this.baseUrl === 'function' ? this.baseUrl() : this.baseUrl;
   }
 
   /**
@@ -311,7 +302,7 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
       async (signal) => {
         let res: Response;
         try {
-          res = await this.fetchFn(`${this.base()}/connector/saveItems`, {
+          res = await this.fetchFn(`${this.baseUrl}/connector/saveItems`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Zotero-Connector-API-Version': '3' },
             body: JSON.stringify({ sessionID, uri, items: [{ ...item, id: itemId }] }),
@@ -329,7 +320,7 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
           const pdf = await this.fetchFn(pdfUrl, { signal });
           if (!pdf.ok) return { pdfAttached: false };
           const blob = await pdf.blob();
-          const up = await this.fetchFn(`${this.base()}/connector/saveAttachment?sessionID=${sessionID}`, {
+          const up = await this.fetchFn(`${this.baseUrl}/connector/saveAttachment?sessionID=${sessionID}`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/pdf',

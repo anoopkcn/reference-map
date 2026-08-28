@@ -17,7 +17,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   const [email, setEmail] = useState(settings.openalexEmail);
   const [zKey, setZKey] = useState(settings.zoteroApiKey);
   const [showZKey, setShowZKey] = useState(false);
-  const [zUrl, setZUrl] = useState(settings.zoteroLocalUrl);
 
   useEffect(() => {
     const d = ref.current;
@@ -26,10 +25,9 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
       setKey(settings.apiKey);
       setEmail(settings.openalexEmail);
       setZKey(settings.zoteroApiKey);
-      setZUrl(settings.zoteroLocalUrl);
       d.showModal();
     } else if (!open && d.open) d.close();
-  }, [open, settings.apiKey, settings.openalexEmail, settings.zoteroApiKey, settings.zoteroLocalUrl]);
+  }, [open, settings.apiKey, settings.openalexEmail, settings.zoteroApiKey]);
 
   // Show the connection status for a key restored from a previous session.
   useEffect(() => {
@@ -44,9 +42,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
   };
   const commitZKey = () => {
     if (zKey.trim() !== settings.zoteroApiKey) update({ zoteroApiKey: zKey.trim() });
-  };
-  const commitZUrl = () => {
-    if (zUrl.trim() !== settings.zoteroLocalUrl) update({ zoteroLocalUrl: zUrl.trim() });
   };
 
   return (
@@ -140,25 +135,6 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
               <span className="faint small">Saving to: <strong>{settings.zoteroCollectionName || 'ask on first save'}</strong></span>
               <button className="btn sm" onClick={openCollections}>Change…</button>
             </div>
-          )}
-          {(!import.meta.env.DEV || settings.zoteroLocalUrl) && (
-          <label className="field" style={{ marginTop: 4 }}>
-            <span>Local Zotero bridge URL <span className="faint">(advanced, hosted copies only)</span></span>
-            <input className="input mono" type="text" value={zUrl} onChange={(e) => setZUrl(e.target.value)} onBlur={commitZUrl} placeholder="http://127.0.0.1:23120" autoComplete="off" spellCheck={false} />
-            <span className="faint small">
-              Lets a hosted copy of this app reach the Zotero app on your computer: run <code>node scripts/zotero-bridge.mjs &lt;this site's origin&gt;</code>{' '}
-              and enter its URL here. Not needed when running the app locally. Chrome/Firefox only.
-            </span>
-            {settings.zoteroLocalUrl && (
-              <span className="faint small">
-                {zotero.localProbed
-                  ? zotero.localAvailable
-                    ? <><Icon name="check" size={13} /> Bridge connected — local Zotero reachable.</>
-                    : <span className="error-text"><Icon name="alert" size={13} /> Bridge not reachable — is it running, and is this origin allowed?</span>
-                  : 'Checking bridge…'}
-              </span>
-            )}
-          </label>
           )}
         </div>
 

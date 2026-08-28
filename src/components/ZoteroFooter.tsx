@@ -19,19 +19,18 @@ function isDismissed(): boolean {
  * flashes the wrong state on load.
  */
 export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const localSupported = useAppStore((s) => s.zotero.localSupported);
   const probed = useAppStore((s) => s.zotero.localProbed);
   const local = useAppStore((s) => s.zotero.localAvailable);
   const hasKey = useAppStore((s) => !!s.settings.zoteroApiKey);
   const username = useAppStore((s) => s.settings.zoteroUsername);
   const [hidden, setHidden] = useState(isDismissed);
 
-  if (localSupported && !probed && !hasKey) return null;
+  if (!probed && !hasKey) return null;
 
   if (local || hasKey) {
     const status = local
       ? `Zotero connected — searching the app on this computer${hasKey ? ' · zotero.org key set' : ''}`
-      : `Zotero via zotero.org${username ? ` as ${username}` : ''}${localSupported ? ' — start the Zotero app for instant local search' : ''}`;
+      : `Zotero via zotero.org${username ? ` as ${username}` : ''} — start the Zotero app for instant local search`;
     return (
       <div className="sidebar-footer">
         <Icon name="bookmark" size={12} /> <span>{status}</span>
@@ -39,7 +38,26 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
     );
   }
 
-  if (hidden) return null;
+  if (hidden) {
+    return (
+      <div className="sidebar-footer">
+        <button
+          className="sidebar-footer-restore"
+          onClick={() => {
+            setHidden(false);
+            try {
+              localStorage.removeItem(DISMISS_KEY);
+            } catch {
+              /* private mode */
+            }
+          }}
+          title="Show how to connect Zotero"
+        >
+          <Icon name="bookmark" size={12} /> Connect Zotero
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="sidebar-footer setup">
       <div className="sidebar-footer-head">
@@ -73,14 +91,14 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
           </p>
           <p className="faint">
             Hosted copies of this app connect via the{' '}
-            <a href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a> Zotero plugin.
+            <a className="linklike" href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a> Zotero plugin.
           </p>
         </>
       ) : (
         <>
           <p>
             <strong>Local</strong> — install the{' '}
-            <a href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a>{' '}
+            <a className="linklike" href={PLUGIN_URL} target="_blank" rel="noopener noreferrer">Reference Map Connect</a>{' '}
             plugin in Zotero, keep Zotero running, and approve this site when Zotero asks. Keyless and instant.
           </p>
           <p>
