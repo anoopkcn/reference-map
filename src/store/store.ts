@@ -122,6 +122,8 @@ export interface AppState {
   zoteroProbeLocal(): Promise<void>;
   /** Lazily check (via the local API) whether a displayed paper is already in the library. */
   zoteroCheckLibrary(id: PaperId): Promise<void>;
+  /** Show a saved paper in the Zotero app (zotero://select), resolving its item key first when only a connector save is recorded. */
+  zoteroOpenLocal(id: PaperId): Promise<void>;
   zoteroOpenCollectionDialog(): void;
   zoteroChooseCollection(key: string, name: string): void;
   zoteroCancelCollection(): void;
@@ -144,6 +146,8 @@ export interface StoreDeps {
   zoteroLocal?: ZoteroLike;
   /** Keyless write path into the running Zotero app; tried before the web API for saves. */
   zoteroConnector?: ZoteroConnectorLike;
+  /** Navigate to a URL outside the app (zotero:// protocol links); injectable for tests. */
+  openUrl?: (url: string) => void;
 }
 
 export type AppStore = ReturnType<typeof createAppStore>;
@@ -162,6 +166,7 @@ export function createAppStore(deps: StoreDeps) {
   const zotero = deps.zotero;
   const zoteroLocal = deps.zoteroLocal;
   const zoteroConnector = deps.zoteroConnector;
+  const openUrl = deps.openUrl ?? ((url: string) => { window.location.href = url; });
   let zoteroVerifyPromise: Promise<boolean> | null = null;
   let zoteroVerifySeq = 0;
   let cache = deps.cache;
@@ -1034,6 +1039,28 @@ export function createAppStore(deps: StoreDeps) {
         } catch {
           /* Zotero closed mid-session — stay unknown, the save flow re-checks anyway */
         }
+      },
+
+      async zoteroOpenLocal(id) {
+        let key = get().zotero.savedKeys[id];
+        if (!key) return;
+        // Connector saves don't report the new item's key — resolve it via the local API now.
+        if (key === 'local' && zoteroLocal) {
+          const p = get().papers.get(id);
+          if (p && (p.externalIds.DOI || p.externalIds.ArXiv)) {
+            try {
+              const item = await zoteroLocal.findByIds(ZOTERO_LOCAL_USER, { doi: p.externalIds.DOI, arxiv: p.externalIds.ArXiv });
+              if (item) {
+                key = item.key;
+                setZotero({ savedKeys: { ...get().zotero.savedKeys, [id]: key } });
+              }
+            } catch {
+              /* Zotero closed mid-session — fall through to opening the library */
+            }
+          }
+        }
+        // Without a key we can still bring Zotero to the front on its library root.
+        openUrl(key === 'local' ? 'zotero://select/library' : `zotero://select/library/items/${key}`);
       },
 
       zoteroOpenCollectionDialog() {

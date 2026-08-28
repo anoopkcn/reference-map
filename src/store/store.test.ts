@@ -138,7 +138,7 @@ describe('store (two providers)', () => {
     oa = new FakeProvider('openalex');
   });
 
-  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike; zoteroConnector?: ZoteroConnectorLike } = {}) => {
+  const make = (over: { cache?: MemoryCache; settings?: Partial<typeof DEFAULT_SETTINGS>; now?: () => number; seedRetryDelays?: number[]; zotero?: ZoteroLike; zoteroLocal?: ZoteroLike; zoteroConnector?: ZoteroConnectorLike; openUrl?: (url: string) => void } = {}) => {
     const c = over.cache ?? cache;
     const identity = new Identity(c);
     const store = createAppStore({
@@ -153,6 +153,7 @@ describe('store (two providers)', () => {
       zotero: over.zotero,
       zoteroLocal: over.zoteroLocal,
       zoteroConnector: over.zoteroConnector,
+      openUrl: over.openUrl,
     });
     return store;
   };
@@ -741,6 +742,51 @@ describe('store (two providers)', () => {
     await store2.getState().addSeeds(['DOI:10.1/a']);
     await store2.getState().zoteroSave('doi:10.1/a');
     expect(conn.saved).toHaveLength(1);
+  });
+
+  it('zoteroOpenLocal shows an item with a known key in the Zotero app', async () => {
+    const opened: string[] = [];
+    const local = new FakeZotero();
+    local.existingDoi = '10.1/s';
+    const store = make({ zoteroLocal: local, openUrl: (u) => opened.push(u), settings: { autoExpandSeeds: false } });
+    await store.getState().zoteroProbeLocal();
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroCheckLibrary('doi:10.1/s');
+    await store.getState().zoteroOpenLocal('doi:10.1/s');
+    expect(opened).toEqual(['zotero://select/library/items/EXIST123']);
+    // Papers not in the library never navigate.
+    await store.getState().zoteroOpenLocal('doi:10.1/a');
+    expect(opened).toHaveLength(1);
+  });
+
+  it('zoteroOpenLocal resolves and caches the key of a connector-saved item', async () => {
+    const opened: string[] = [];
+    const conn = new FakeConnector();
+    const local = new FakeZotero();
+    const store = make({ zoteroConnector: conn, zoteroLocal: local, openUrl: (u) => opened.push(u), settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('local');
+    local.existingDoi = '10.1/s'; // the saved item is now findable in the local library
+    await store.getState().zoteroOpenLocal('doi:10.1/s');
+    expect(opened).toEqual(['zotero://select/library/items/EXIST123']);
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('EXIST123');
+    // The cached key is reused without another lookup.
+    const calls = local.calls.length;
+    await store.getState().zoteroOpenLocal('doi:10.1/s');
+    expect(local.calls.length).toBe(calls);
+  });
+
+  it('zoteroOpenLocal falls back to the library root when the key cannot be resolved', async () => {
+    const opened: string[] = [];
+    const conn = new FakeConnector();
+    const local = new FakeZotero();
+    const store = make({ zoteroConnector: conn, zoteroLocal: local, openUrl: (u) => opened.push(u), settings: { autoExpandSeeds: false } });
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    await store.getState().zoteroOpenLocal('doi:10.1/s'); // findByIds finds nothing
+    expect(opened).toEqual(['zotero://select/library']);
+    expect(store.getState().zotero.savedKeys['doi:10.1/s']).toBe('local');
   });
 
   it('Zotero makes no local requests until enabled, and the first probe fires on enabling', async () => {

@@ -196,10 +196,15 @@ describe('ZoteroConnectorClient', () => {
     expect(upload.url).toBe(`/zotero-local/connector/saveAttachment?sessionID=${saveBody.sessionID}`);
     const headers = new Headers(upload.init!.headers);
     expect(headers.get('content-type')).toBe('application/pdf');
+    // Without these, Zotero severs the connection for browser-origin requests (hosted copies).
+    expect(headers.get('x-zotero-connector-api-version')).toBe('3');
+    expect(headers.get('zotero-allowed-request')).toBe('true');
     const meta = JSON.parse(headers.get('x-metadata')!) as Record<string, string>;
     expect(meta.parentItemID).toBe(saveBody.items[0]!.id);
     expect(meta.title).toBe('Full Text PDF');
     expect(upload.init!.body).toBeInstanceOf(Blob);
+    // The third-party PDF download must stay header-free — Zotero headers would trip CORS on arxiv.org etc.
+    expect(new Headers(f.calls[1]!.init?.headers).get('zotero-allowed-request')).toBeNull();
   });
 
   it('treats non-201 responses as failures (200 can carry a plain-text error)', async () => {

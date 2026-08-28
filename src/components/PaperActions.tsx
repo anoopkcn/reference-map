@@ -22,6 +22,7 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const pushToast = useAppStore((s) => s.pushToast);
   const expandNode = useAppStore((s) => s.expandNode);
   const zoteroSave = useAppStore((s) => s.zoteroSave);
+  const zoteroOpenLocal = useAppStore((s) => s.zoteroOpenLocal);
   const zoteroCheckLibrary = useAppStore((s) => s.zoteroCheckLibrary);
   const zoteroEnabled = useAppStore((s) => s.settings.zoteroEnabled && (!!s.settings.zoteroApiKey || s.zotero.localAvailable));
   const zoteroLocalUp = useAppStore((s) => s.zotero.localAvailable);
@@ -77,6 +78,10 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
             <button
               className={size}
               onClick={async () => {
+                if (zoteroSaved) {
+                  void zoteroOpenLocal(paper.paperId);
+                  return;
+                }
                 setBusy('zotero');
                 try {
                   await zoteroSave(paper.paperId);
@@ -84,8 +89,8 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
                   setBusy(null);
                 }
               }}
-              disabled={busy === 'zotero' || zoteroSaved}
-              title={zoteroSaved ? 'In your Zotero library' : 'Save this paper to your Zotero library'}
+              disabled={busy === 'zotero'}
+              title={zoteroSaved ? 'Show this item in your Zotero app' : 'Save this paper to your Zotero library'}
             >
               {zoteroSaved ? <Icon name="check" /> : busy === 'zotero' ? <span className="spinner" /> : <Icon name="bookmark" />}
               {zoteroSaved ? ' In Zotero' : ' Zotero'}

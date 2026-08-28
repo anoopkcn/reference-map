@@ -274,6 +274,15 @@ export interface ZoteroConnectorLike {
 }
 
 /**
+ * Zotero's local server severs the connection (no HTTP response at all) for requests that
+ * carry a browser Origin/User-Agent unless one of its opt-in headers is present. Hosted
+ * copies talk to 127.0.0.1 straight from the page, so EVERY connector request needs these —
+ * saveAttachment without them is exactly "item saved, PDF silently missing". The dev-server
+ * bridge strips browser headers, which masks the omission in dev.
+ */
+const CONNECTOR_GATE_HEADERS = { 'X-Zotero-Connector-API-Version': '3', 'Zotero-Allowed-Request': 'true' };
+
+/**
  * Keyless writes into the RUNNING Zotero app via its connector endpoint (the same one the
  * browser extension uses). Items are filed into the collection currently selected in Zotero.
  */
@@ -304,7 +313,7 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
         try {
           res = await this.fetchFn(`${this.baseUrl}/connector/saveItems`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Zotero-Connector-API-Version': '3' },
+            headers: { 'Content-Type': 'application/json', ...CONNECTOR_GATE_HEADERS },
             body: JSON.stringify({ sessionID, uri, items: [{ ...item, id: itemId }] }),
             signal,
           });
@@ -325,6 +334,7 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
             headers: {
               'Content-Type': 'application/pdf',
               'X-Metadata': JSON.stringify({ sessionID, parentItemID: itemId, title: 'Full Text PDF', url: pdfUrl }),
+              ...CONNECTOR_GATE_HEADERS,
             },
             body: blob,
             signal,
