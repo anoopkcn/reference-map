@@ -32,9 +32,7 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
   if (enabled && !probed && !hasKey) return null;
 
   if (enabled && (local || hasKey)) {
-    const status = local
-      ? `Zotero connected — searching the app on this computer${hasKey ? ' · zotero.org key set' : ''}`
-      : `Zotero via zotero.org${username ? ` as ${username}` : ''} — start the Zotero app for instant local search`;
+    const status = local ? 'Zotero connected' : `Zotero connected via zotero.org${username ? ` as ${username}` : ''}`;
     return (
       <div className="sidebar-footer">
         <Icon name="bookmark" size={12} /> <span>{status}</span>
