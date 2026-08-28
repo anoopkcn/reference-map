@@ -300,8 +300,11 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
   /**
    * Save the item; when `pdfUrl` is given, additionally download the PDF in the browser and
    * upload it as a child attachment (the modern connector contract — Zotero no longer fetches
-   * attachment URLs itself). The PDF is best-effort: CORS or download failures still leave the
-   * item saved, reported as `pdfAttached: false`.
+   * attachment URLs itself). When that yields no PDF (CORS-blocked host, dead OA link, or no
+   * known URL at all), fall back to Zotero's own attachment resolvers: the app looks up an OA
+   * copy by the item's DOI (Unpaywall-style) and downloads it itself, immune to browser CORS —
+   * the same fallback the official browser connector uses. Everything past the item save is
+   * best-effort: failures still leave the item saved, reported as `pdfAttached: false`.
    */
   async saveItem(item: ZoteroConnectorItem, uri: string, pdfUrl?: string): Promise<{ pdfAttached: boolean }> {
     const sessionID = makeWriteToken();
@@ -324,29 +327,56 @@ export class ZoteroConnectorClient implements ZoteroConnectorLike {
         // Strictly 201: the connector server signals some failures (e.g. a read-only target
         // library) as 200 with a plain-text body, which must not count as saved.
         if (res.status !== 201) throw new ApiError(res.status, `HTTP ${res.status}`, await safeBody(res), 'zotero');
-        if (!pdfUrl) return { pdfAttached: false };
-        try {
-          const pdf = await this.fetchFn(pdfUrl, { signal });
-          if (!pdf.ok) return { pdfAttached: false };
-          const blob = await pdf.blob();
-          const up = await this.fetchFn(`${this.baseUrl}/connector/saveAttachment?sessionID=${sessionID}`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/pdf',
-              'X-Metadata': JSON.stringify({ sessionID, parentItemID: itemId, title: 'Full Text PDF', url: pdfUrl }),
-              ...CONNECTOR_GATE_HEADERS,
-            },
-            body: blob,
-            signal,
-          });
-          return { pdfAttached: up.status === 201 };
-        } catch {
-          if (signal.aborted) throw new AbortedError();
-          return { pdfAttached: false };
-        }
+        if (pdfUrl && (await this.uploadPdf(sessionID, itemId, pdfUrl, signal))) return { pdfAttached: true };
+        return { pdfAttached: await this.resolvePdf(sessionID, itemId, signal) };
       },
       {},
     );
+  }
+
+  /** Download the PDF in the browser and upload its bytes into the save session. */
+  private async uploadPdf(sessionID: string, itemId: string, pdfUrl: string, signal: AbortSignal): Promise<boolean> {
+    try {
+      const pdf = await this.fetchFn(pdfUrl, { signal });
+      if (!pdf.ok) return false;
+      const blob = await pdf.blob();
+      const up = await this.fetchFn(`${this.baseUrl}/connector/saveAttachment?sessionID=${sessionID}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/pdf',
+          'X-Metadata': JSON.stringify({ sessionID, parentItemID: itemId, title: 'Full Text PDF', url: pdfUrl }),
+          ...CONNECTOR_GATE_HEADERS,
+        },
+        body: blob,
+        signal,
+      });
+      return up.status === 201;
+    } catch {
+      if (signal.aborted) throw new AbortedError();
+      return false;
+    }
+  }
+
+  /** Ask Zotero to find (by DOI) and download a PDF itself, within the save session. */
+  private async resolvePdf(sessionID: string, itemId: string, signal: AbortSignal): Promise<boolean> {
+    try {
+      const has = await this.postJson('/connector/hasAttachmentResolvers', { sessionID, itemID: itemId }, signal);
+      if (has.status !== 200 || (await has.text()).trim() !== 'true') return false;
+      const saved = await this.postJson('/connector/saveAttachmentFromResolver', { sessionID, itemID: itemId }, signal);
+      return saved.status === 201;
+    } catch {
+      if (signal.aborted) throw new AbortedError();
+      return false;
+    }
+  }
+
+  private postJson(path: string, body: unknown, signal: AbortSignal): Promise<Response> {
+    return this.fetchFn(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...CONNECTOR_GATE_HEADERS },
+      body: JSON.stringify(body),
+      signal,
+    });
   }
 }
 

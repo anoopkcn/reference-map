@@ -228,6 +228,37 @@ describe('ZoteroConnectorClient', () => {
     expect(res.pdfAttached).toBe(false);
     expect(f.calls.some((call) => call.url.includes('saveAttachment'))).toBe(false);
   });
+
+  it('falls back to Zotero-side resolvers when the direct PDF download fails', async () => {
+    const f = mockFetch((url) => {
+      if (url.endsWith('/connector/saveItems')) return { status: 201, body: {} };
+      if (url.startsWith('https://dead.example/')) return { status: 404 };
+      if (url.endsWith('/connector/hasAttachmentResolvers')) return { status: 200, body: true };
+      if (url.endsWith('/connector/saveAttachmentFromResolver')) return { status: 201, body: 'Full Text' };
+      return { status: 500 };
+    });
+    const c = new ZoteroConnectorClient({ queue: queue(), fetchFn: f.fn });
+    const res = await c.saveItem(paperToConnectorItem(paper()), 'https://x', 'https://dead.example/paper.pdf');
+    expect(res.pdfAttached).toBe(true);
+    const saveBody = JSON.parse(String(f.calls[0]!.init!.body)) as { sessionID: string; items: { id: string }[] };
+    const resolver = f.calls.find((call) => call.url.endsWith('/connector/saveAttachmentFromResolver'))!;
+    expect(JSON.parse(String(resolver.init!.body))).toEqual({ sessionID: saveBody.sessionID, itemID: saveBody.items[0]!.id });
+    // The resolver calls face Zotero's browser gate too (hosted copies talk straight to 23119).
+    const headers = new Headers(resolver.init!.headers);
+    expect(headers.get('zotero-allowed-request')).toBe('true');
+  });
+
+  it('tries the resolvers even without a PDF URL, and reports false when Zotero has none', async () => {
+    const f = mockFetch((url) => {
+      if (url.endsWith('/connector/saveItems')) return { status: 201, body: {} };
+      if (url.endsWith('/connector/hasAttachmentResolvers')) return { status: 200, body: false };
+      return { status: 500 };
+    });
+    const c = new ZoteroConnectorClient({ queue: queue(), fetchFn: f.fn });
+    const res = await c.saveItem(paperToConnectorItem(paper()), 'https://x');
+    expect(res.pdfAttached).toBe(false);
+    expect(f.calls.map((call) => call.url)).toEqual(['/zotero-local/connector/saveItems', '/zotero-local/connector/hasAttachmentResolvers']);
+  });
 });
 
 describe('pdfUrl', () => {
