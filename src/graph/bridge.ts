@@ -184,10 +184,12 @@ export class GraphBridge {
     // Refresh per-node attributes (cheap, O(n)).
     for (let i = 0; i < f.n; i++) {
       const node = g.nodes.get(f.ids[i]!)!;
+      const paper = s.papers.get(node.id);
       f.r[i] = node.r;
       f.role[i] = node.role;
+      f.year[i] = paper?.year ?? 0;
       f.labels[i] = node.label;
-      f.titles[i] = s.papers.get(node.id)?.title ?? node.label;
+      f.titles[i] = paper?.title ?? node.label;
       let fl = 0;
       if (node.seed) fl |= FLAG_SEED;
       if (node.pinned) fl |= FLAG_PINNED;

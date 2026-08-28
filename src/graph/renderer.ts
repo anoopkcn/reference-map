@@ -66,6 +66,11 @@ export interface DrawOptions {
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
 const TWO_PI = Math.PI * 2;
 
+// Older papers are drawn more transparent; years are quantized into buckets so fills stay batched.
+const AGE_BUCKETS = 8;
+const AGE_MIN_ALPHA = 0.3;
+let ageBucket = new Uint8Array(0);
+
 /** Draw one frame. No allocations in the hot loops beyond the per-role batches. */
 export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: ViewTransform, theme: GraphTheme, o: DrawOptions): void {
   const { width, height, dpr } = o;
@@ -128,30 +133,48 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
     drawArrows(ctx, f, focus, theme.edgeHi, k, o.visibleRoleMask);
   }
 
-  // ---- nodes, batched per role ----
+  // ---- nodes, batched per role and age bucket ----
   const neighbors = o.neighbors;
+  let yrMin = 32767;
+  let yrMax = 0;
+  for (let i = 0; i < f.n; i++) {
+    const yr = f.year[i]!;
+    if (yr <= 0) continue;
+    if (yr < yrMin) yrMin = yr;
+    if (yr > yrMax) yrMax = yr;
+  }
+  const yrSpan = yrMax - yrMin;
+  if (ageBucket.length < f.n) ageBucket = new Uint8Array(f.n);
+  for (let i = 0; i < f.n; i++) {
+    const yr = f.year[i]!;
+    // unknown years and degenerate ranges render fully opaque
+    ageBucket[i] = yrSpan > 0 && yr > 0 ? Math.round(((yr - yrMin) / yrSpan) * (AGE_BUCKETS - 1)) : AGE_BUCKETS - 1;
+  }
   for (let pass = 0; pass < 2; pass++) {
     // pass 0: dimmed nodes, pass 1: normal/highlighted (drawn on top)
     for (let role = 4; role >= 0; role--) {
       ctx.fillStyle = theme.node[role]!;
-      ctx.beginPath();
-      let any = false;
-      for (let i = 0; i < f.n; i++) {
-        if (!visible(i)) continue;
-        if (f.role[i] !== role) continue;
-        const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
-        if ((pass === 0) !== isDim) continue;
-        const x = pos[2 * i]!;
-        const y = pos[2 * i + 1]!;
-        if (x < x0 || x > x1 || y < y0 || y > y1) continue;
-        const r = f.r[i]!;
-        ctx.moveTo(x + r, y);
-        ctx.arc(x, y, r, 0, TWO_PI);
-        any = true;
-      }
-      if (any) {
-        ctx.globalAlpha = pass === 0 ? 0.25 : 1;
-        ctx.fill();
+      for (let bucket = 0; bucket < AGE_BUCKETS; bucket++) {
+        ctx.beginPath();
+        let any = false;
+        for (let i = 0; i < f.n; i++) {
+          if (f.role[i] !== role) continue;
+          if (ageBucket[i] !== bucket) continue;
+          if (!visible(i)) continue;
+          const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
+          if ((pass === 0) !== isDim) continue;
+          const x = pos[2 * i]!;
+          const y = pos[2 * i + 1]!;
+          if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+          const r = f.r[i]!;
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, TWO_PI);
+          any = true;
+        }
+        if (any) {
+          ctx.globalAlpha = (pass === 0 ? 0.25 : 1) * (AGE_MIN_ALPHA + ((1 - AGE_MIN_ALPHA) * bucket) / (AGE_BUCKETS - 1));
+          ctx.fill();
+        }
       }
     }
   }

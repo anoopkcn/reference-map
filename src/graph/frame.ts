@@ -5,6 +5,8 @@ export interface FrameData {
   pos: Float32Array;
   r: Float32Array;
   role: Uint8Array;
+  /** publication year, 0 when unknown */
+  year: Int16Array;
   /** bit flags, see FLAG_* */
   flags: Uint8Array;
   labels: string[];
@@ -38,6 +40,7 @@ export function createFrame(): FrameData {
     pos: new Float32Array(0),
     r: new Float32Array(0),
     role: new Uint8Array(0),
+    year: new Int16Array(0),
     flags: new Uint8Array(0),
     labels: [],
     titles: [],
@@ -52,7 +55,7 @@ export function createFrame(): FrameData {
   };
 }
 
-function grow<T extends Float32Array | Uint8Array | Int32Array>(arr: T, need: number, make: (n: number) => T): T {
+function grow<T extends Float32Array | Uint8Array | Int16Array | Int32Array>(arr: T, need: number, make: (n: number) => T): T {
   if (arr.length >= need) return arr;
   const next = make(Math.max(need, arr.length * 2, 64));
   next.set(arr);
@@ -63,6 +66,7 @@ export function ensureNodeCapacity(f: FrameData, n: number): void {
   f.pos = grow(f.pos, 2 * n, (k) => new Float32Array(k));
   f.r = grow(f.r, n, (k) => new Float32Array(k));
   f.role = grow(f.role, n, (k) => new Uint8Array(k));
+  f.year = grow(f.year, n, (k) => new Int16Array(k));
   f.flags = grow(f.flags, n, (k) => new Uint8Array(k));
 }
 
