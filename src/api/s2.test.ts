@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError } from './errors';
+import { ElidedError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError } from './errors';
 import { hasUnicodeReplacement, mergePaper, normalizePaper, repairUnicodeMetadata } from './normalize';
 import { RequestQueue } from './queue';
 import { S2Client, parseRetryAfter } from './s2';
@@ -198,6 +198,23 @@ describe('S2Client', () => {
     const r2 = await c.getList('abc', 'cites', 5000);
     expect(f.calls[1]!.url).toContain('/paper/abc/citations?limit=1000&');
     expect(r2.ids).toEqual([]); // citingPaper field missing in mock → all dropped
+  });
+
+  it('getList throws ElidedError on a publisher-elided list (200 with data: null); a genuinely empty list is fine', async () => {
+    // e.g. Elsevier papers: /references answers 200 with data: null and an "elided" disclaimer.
+    const f = mockFetch((u) => u.includes('/references')
+      ? {
+          body: {
+            data: null,
+            citingPaperInfo: { openAccessPdf: { url: '', status: 'CLOSED', disclaimer: "Notice: The following paper fields have been elided by the publisher: {'references'}." } },
+          },
+        }
+      : { body: { offset: 0, data: [] } });
+    const c = new S2Client({ queue: queue(), fetchFn: f.fn });
+    await expect(c.getList('abc', 'refs', 100)).rejects.toBeInstanceOf(ElidedError);
+    const empty = await c.getList('abc', 'cites', 100);
+    expect(empty.ids).toEqual([]);
+    expect(empty.hasMore).toBe(false);
   });
 
   it('getList related uses the Recommendations API and reports hasMore only on a full page below the cap', async () => {

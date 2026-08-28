@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Identity, type AliasEntry, type AliasStore } from '../lib/identity';
 import type { DetailLevel, ListKind, Lookup, Paper, ProviderId, SourceMode } from '../types';
-import { NetworkError, NotFoundError, UnsupportedLookupError } from './errors';
+import { ElidedError, NetworkError, NotFoundError, UnsupportedLookupError } from './errors';
 import { ProviderStats, type ListResult, type Provider, type SearchResult } from './provider';
 import { RequestQueue, type EnqueueOptions } from './queue';
 import { Router } from './router';
@@ -215,6 +215,15 @@ describe('Router', () => {
     const l2 = await r.getList(oaSeed, 'cites', 10);
     expect(l2.provider).toBe('openalex');
     expect(l2.ids[0]).toBe('doi:10.1/shared'); // same canonical id as the S2 record
+  });
+
+  it('falls back to OpenAlex when the publisher elides a list on S2', async () => {
+    const r = make();
+    s2.fail = new ElidedError('Publisher withholds references from Semantic Scholar', 's2');
+    const seed = mk('s2', 'S', '10.1/seed');
+    const l = await r.getList(seed, 'refs', 10);
+    expect(l.provider).toBe('openalex');
+    expect(l.ids.length).toBeGreaterThan(0);
   });
 
   it('routes related works only to OpenAlex', async () => {

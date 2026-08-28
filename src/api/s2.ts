@@ -1,6 +1,6 @@
 import { S2_API, S2_RECOMMENDATIONS_API, type DetailLevel, type ListKind, type Lookup, type Paper, type PaperId } from '../types';
 import { arxivFromDoi } from '../lib/identity';
-import { AbortedError, ApiError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError, isAbort } from './errors';
+import { AbortedError, ApiError, ElidedError, NetworkError, NotFoundError, RateLimitedError, UnsupportedLookupError, isAbort } from './errors';
 import { DETAIL_FIELDS_PARAM, LIST_FIELDS_PARAM, S2_LIMITS } from './fields';
 import { normalizePaper, type S2PaperRaw } from './normalize';
 import { PRIORITY, ProviderStats, type ListResult, type OpKind, type Provider, type SearchResult } from './provider';
@@ -125,18 +125,22 @@ export class S2Client implements Provider {
     const lim = Math.max(1, Math.min(S2_LIMITS.list, Math.floor(limit)));
     const path = kind === 'refs' ? 'references' : 'citations';
     const field = kind === 'refs' ? 'citedPaper' : 'citingPaper';
-    const raw = await this.request<{ next?: number; data?: Record<string, S2PaperRaw | null>[] }>(
+    const raw = await this.request<{ next?: number; data?: Record<string, S2PaperRaw | null>[] | null }>(
       kind,
       `${kind}:${native}:${lim}`,
       `/paper/${encodeURIComponent(native)}/${path}?limit=${lim}&fields=${LIST_FIELDS_PARAM}`,
       undefined,
       { priority: PRIORITY.list, ...options },
     );
+    // Some publishers (e.g. Elsevier) forbid S2 from sharing reference lists: the API answers
+    // 200 with `data: null` and an "elided by the publisher" disclaimer, where a genuinely empty
+    // list is `data: []`. Throw so the Router can fall back to a provider that carries the list.
+    if (raw.data == null) throw new ElidedError(`Publisher withholds ${path} from Semantic Scholar`, 's2');
     const now = this.now();
     const ids: PaperId[] = [];
     const papers: Paper[] = [];
     const seen = new Set<PaperId>();
-    for (const row of raw.data ?? []) {
+    for (const row of raw.data) {
       const p = normalizePaper(row?.[field], 'list', now);
       if (!p || seen.has(p.paperId)) continue;
       seen.add(p.paperId);

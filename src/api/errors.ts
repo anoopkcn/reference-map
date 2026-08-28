@@ -40,6 +40,19 @@ export class RateLimitedError extends ApiError {
   }
 }
 
+/**
+ * The provider knows the paper but the publisher forbids sharing this list through its API
+ * (e.g. Elsevier elides reference lists on Semantic Scholar: 200 with `data: null`).
+ */
+export class ElidedError extends Error {
+  readonly provider: ErrorSource | undefined;
+  constructor(message = 'Withheld by the publisher', provider?: ErrorSource) {
+    super(message);
+    this.name = 'ElidedError';
+    this.provider = provider;
+  }
+}
+
 export class NetworkError extends Error {
   readonly provider: ErrorSource | undefined;
   constructor(message = 'Network error', provider?: ErrorSource) {
@@ -84,6 +97,7 @@ export function describeError(e: unknown): string {
   }
   if (e instanceof NotFoundError) return e.provider ? `Not found on ${labelOf(e.provider)}` : 'Not found on Semantic Scholar or OpenAlex';
   if (e instanceof RateLimitedError) return `Rate limited by ${who(e.provider)} — retrying`;
+  if (e instanceof ElidedError) return `The publisher does not allow ${who(e.provider)} to share this list`;
   if (e instanceof ApiError) return `${who(e.provider)} error (${e.status})`;
   if (e instanceof NetworkError) return `Could not reach ${who(e.provider)} (network error or service temporarily unavailable) — try again in a moment`;
   if (isAbort(e)) return 'Cancelled';

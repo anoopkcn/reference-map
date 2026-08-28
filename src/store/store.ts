@@ -604,7 +604,10 @@ export function createAppStore(deps: StoreDeps) {
             const paper = get().papers.get(id);
             if (!paper) throw new Error('Paper not loaded');
             const candidates = opts.force ? [] : await cachedListCandidates(cache, id, kind);
-            const cached = candidates.filter((l) => l.complete || l.limit >= limit).sort(rankCachedLists)[0];
+            // An empty cached list contradicting the paper's own counts is a poisoned entry
+            // (e.g. an elided S2 response cached before elision was detected) — refetch instead.
+            const trusted = candidates.filter((l) => l.ids.length > 0 || listTotal(paper, kind, 0) === 0);
+            const cached = trusted.filter((l) => l.complete || l.limit >= limit).sort(rankCachedLists)[0];
             if (cached) {
               // A stale cached list is served immediately and refreshed in the background.
               await ensurePapers(cached.ids);
