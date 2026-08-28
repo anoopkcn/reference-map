@@ -131,6 +131,12 @@ export interface Settings {
   theme: Theme;
   sortKey: SortKey;
   sortDir: SortDir;
+  /**
+   * Master switch for the Zotero integration. Off by default so visitors never trigger the
+   * browser's "access other apps on this device" permission prompt — no local request is
+   * made until the user opts in.
+   */
+  zoteroEnabled: boolean;
   /** Zotero Web API key (optional; needs library read + write). */
   zoteroApiKey: string;
   /** Zotero userID discovered from the key (cached; cleared when the key changes). */
@@ -155,6 +161,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   sortKey: 'citationCount',
   sortDir: 'desc',
+  zoteroEnabled: false,
   zoteroApiKey: '',
   zoteroUserId: '',
   zoteroUsername: '',

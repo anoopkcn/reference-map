@@ -145,7 +145,8 @@ describe('store (two providers)', () => {
       router: new Router({ providers: [s2, oa], identity, getMode: () => store.getState().settings.sourceMode, softTimeoutMs: 4000 }),
       identity,
       cache: c,
-      settings: { ...DEFAULT_SETTINGS, ...over.settings },
+      // Zotero is opt-in for real users; tests exercise the enabled behavior unless they say otherwise.
+      settings: { ...DEFAULT_SETTINGS, zoteroEnabled: true, ...over.settings },
       toastMs: 0,
       now: over.now ?? (() => 10),
       seedRetryDelays: over.seedRetryDelays ?? [],
@@ -740,6 +741,32 @@ describe('store (two providers)', () => {
     await store2.getState().addSeeds(['DOI:10.1/a']);
     await store2.getState().zoteroSave('doi:10.1/a');
     expect(conn.saved).toHaveLength(1);
+  });
+
+  it('Zotero makes no local requests until enabled, and the first probe fires on enabling', async () => {
+    const local = new FakeZotero();
+    const conn = new FakeConnector();
+    const web = new FakeZotero();
+    // Even with an API key stored, disabled means NO Zotero anywhere — it's a master switch.
+    const store = make({ zotero: web, zoteroLocal: local, zoteroConnector: conn, settings: { ...zoteroSettings, zoteroEnabled: false, zoteroCollectionKey: 'C1', zoteroCollectionName: 'ML', autoExpandSeeds: false } });
+    await store.getState().zoteroProbeLocal();
+    await store.getState().searchPapers('graph');
+    await settle();
+    expect(local.calls).toEqual([]); // never touched — no browser permission prompt for visitors
+    expect(store.getState().search!.zotero).toBeUndefined();
+    await store.getState().addSeeds(['DOI:10.1/s']);
+    await store.getState().zoteroSave('doi:10.1/s');
+    expect(conn.saved).toHaveLength(0);
+    expect(web.calls).toEqual([]); // key path is off too
+    expect(await store.getState().zoteroVerifyKey()).toBe(false);
+    // The opt-in moment: enabling probes immediately (this is when the browser may prompt).
+    store.getState().updateSettings({ zoteroEnabled: true });
+    await settle();
+    expect(local.calls.length).toBeGreaterThan(0);
+    expect(store.getState().zotero).toMatchObject({ localAvailable: true, localProbed: true });
+    // Disabling reverts the local state.
+    store.getState().updateSettings({ zoteroEnabled: false });
+    expect(store.getState().zotero).toMatchObject({ localAvailable: false, localProbed: false });
   });
 
   it('zoteroProbeLocal reports whether the Zotero app answers', async () => {

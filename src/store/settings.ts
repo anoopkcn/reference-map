@@ -28,6 +28,7 @@ export function sanitizeSettings(input: Partial<Settings> | null | undefined): S
     theme: oneOf(s.theme, ['system', 'light', 'dark'] as const, DEFAULT_SETTINGS.theme),
     sortKey: oneOf(s.sortKey, ['year', 'citationCount', 'referenceCount', 'influentialCitationCount'] as const, DEFAULT_SETTINGS.sortKey),
     sortDir: oneOf(s.sortDir, ['asc', 'desc'] as const, DEFAULT_SETTINGS.sortDir),
+    zoteroEnabled: typeof s.zoteroEnabled === 'boolean' ? s.zoteroEnabled : DEFAULT_SETTINGS.zoteroEnabled,
     zoteroApiKey: typeof s.zoteroApiKey === 'string' ? s.zoteroApiKey.trim() : DEFAULT_SETTINGS.zoteroApiKey,
     zoteroUserId: typeof s.zoteroUserId === 'string' ? s.zoteroUserId.trim() : DEFAULT_SETTINGS.zoteroUserId,
     zoteroUsername: typeof s.zoteroUsername === 'string' ? s.zoteroUsername.trim() : DEFAULT_SETTINGS.zoteroUsername,

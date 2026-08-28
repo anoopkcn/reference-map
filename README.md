@@ -45,7 +45,9 @@ Deploy `dist/` to any static host (GitHub Pages, Netlify, Vercel, S3...). The bu
 
 ## Zotero integration
 
-Search your Zotero library as you type (its own section above the web results), seed maps from your papers, and save papers you discover back into Zotero — with the PDF attached when one is available. Three ways to connect:
+Search your Zotero library as you type (its own section above the web results), seed maps from your papers, and save papers you discover back into Zotero — with the PDF attached when one is available.
+
+The integration is **off by default**: the app makes no local-network requests (and the browser shows no "access other apps on this device" permission prompt) until you tick *Enable Zotero* — in Settings or via the sidebar footer's Enable button. Ways to connect once enabled:
 
 - **Hosted copy + the Connect plugin** (recommended for hosted use): install the *Reference Map Connect* plugin in Zotero once (`reference-map-connect.xpi` from Releases, or `npm run plugin:build` → Zotero → Tools → Plugins → gear → *Install Plugin From File*), enable *Allow other applications on this computer to communicate with Zotero* in Zotero's Settings → Advanced, then open the app — Zotero shows an Allow/Deny dialog for the site's origin, remembered after one click. Keyless, instant, PDFs included. Chrome/Firefox only — Safari blocks https pages from calling localhost. The plugin never weakens Zotero's own web-page blocking; it adds CORS answers solely for origins you approve.
 - **Local, running the app yourself** (`npm run dev`): zero setup beyond the same *Allow other applications…* checkbox — the dev server proxies to Zotero directly, no plugin needed.

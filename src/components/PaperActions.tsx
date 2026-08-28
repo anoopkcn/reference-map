@@ -23,7 +23,7 @@ export function PaperActions({ paper, compact = false, onRemove, hideWhenExpande
   const expandNode = useAppStore((s) => s.expandNode);
   const zoteroSave = useAppStore((s) => s.zoteroSave);
   const zoteroCheckLibrary = useAppStore((s) => s.zoteroCheckLibrary);
-  const zoteroEnabled = useAppStore((s) => !!s.settings.zoteroApiKey || s.zotero.localAvailable);
+  const zoteroEnabled = useAppStore((s) => s.settings.zoteroEnabled && (!!s.settings.zoteroApiKey || s.zotero.localAvailable));
   const zoteroLocalUp = useAppStore((s) => s.zotero.localAvailable);
   const zoteroSaved = useAppStore((s) => !!s.zotero.savedKeys[paper.paperId]);
 

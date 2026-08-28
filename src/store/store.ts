@@ -375,7 +375,7 @@ export function createAppStore(deps: StoreDeps) {
      * false = connector unavailable/failed, caller should try the web API.
      */
     const tryConnectorSave = async (id: PaperId): Promise<boolean> => {
-      if (!zoteroConnector) return false;
+      if (!zoteroConnector || !get().settings.zoteroEnabled) return false;
       const p = (await get().ensureDetail(id)) ?? get().papers.get(id);
       if (!p) return true;
       try {
@@ -766,8 +766,9 @@ export function createAppStore(deps: StoreDeps) {
         searchCtrl = ctrl;
         // Same no-flicker rule as the typing preview: only render the Zotero section when a
         // source is plausibly reachable. A silent probe recovers the flag once Zotero is back.
-        if (zoteroLocal && !get().zotero.localAvailable) void get().zoteroProbeLocal();
-        const zoteroAvailable = (!!zoteroLocal && get().zotero.localAvailable) || (!!zotero && !!get().settings.zoteroApiKey);
+        if (zoteroLocal && get().settings.zoteroEnabled && !get().zotero.localAvailable) void get().zoteroProbeLocal();
+        const zoteroAvailable = get().settings.zoteroEnabled
+          && ((!!zoteroLocal && get().zotero.localAvailable) || (!!zotero && !!get().settings.zoteroApiKey));
         set({ search: { query: q, status: 'loading', ids: [], total: null, zotero: zoteroAvailable ? { status: 'loading', items: [] } : undefined } });
         const patch = (p: Partial<SearchState>): void => {
           const cur = get().search;
@@ -806,7 +807,7 @@ export function createAppStore(deps: StoreDeps) {
         // Preview only with positive evidence Zotero is reachable — otherwise every keystroke
         // would flash the panel in (loading) and out (instant failure). Submitted searches
         // still try local unconditionally and turn the flag back on when Zotero returns.
-        if (!zoteroLocal || !get().zotero.localAvailable || q.length < 2) {
+        if (!zoteroLocal || !get().settings.zoteroEnabled || !get().zotero.localAvailable || q.length < 2) {
           if (cur?.status === 'idle') set({ search: null });
           return;
         }
@@ -895,6 +896,15 @@ export function createAppStore(deps: StoreDeps) {
           zoteroVerifyPromise = null;
           if (next.zoteroApiKey) void get().zoteroVerifyKey();
         }
+        if (next.zoteroEnabled !== prev.zoteroEnabled) {
+          if (next.zoteroEnabled) {
+            // The opt-in moment: this first local request is what surfaces the browser's
+            // local-network permission prompt (and Zotero's own consent dialog).
+            void get().zoteroProbeLocal();
+          } else {
+            setZotero({ localAvailable: false, localProbed: false, searchSource: null });
+          }
+        }
       },
 
       async clearCache() {
@@ -914,7 +924,7 @@ export function createAppStore(deps: StoreDeps) {
 
       async zoteroVerifyKey() {
         const key = get().settings.zoteroApiKey;
-        if (!zotero || !key) return false;
+        if (!zotero || !key || !get().settings.zoteroEnabled) return false;
         if (zoteroVerifyPromise) return zoteroVerifyPromise;
         setZotero({ status: 'checking', error: undefined });
         const seq = ++zoteroVerifySeq;
@@ -937,9 +947,10 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       async zoteroSearch(query, signal) {
+        if (!get().settings.zoteroEnabled) return [];
         // Local first: keyless, instant, and sees not-yet-synced items. Any failure
         // (Zotero closed, local API disabled, no proxy on a static deploy) falls through.
-        if (zoteroLocal) {
+        if (zoteroLocal && get().settings.zoteroEnabled) {
           try {
             const items = await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, query, { limit: 20, signal });
             setZotero({ searchSource: 'local', localAvailable: true });
@@ -985,7 +996,7 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       async zoteroSave(id) {
-        if (get().zotero.savedKeys[id]) return;
+        if (!get().settings.zoteroEnabled || get().zotero.savedKeys[id]) return;
         const canWeb = !!zotero && !!get().settings.zoteroApiKey;
         if (!zoteroConnector && !canWeb) return;
         if (await tryConnectorSave(id)) return;
@@ -1002,7 +1013,7 @@ export function createAppStore(deps: StoreDeps) {
       },
 
       async zoteroProbeLocal() {
-        if (!zoteroLocal) return;
+        if (!zoteroLocal || !get().settings.zoteroEnabled) return;
         try {
           await zoteroLocal.searchItems(ZOTERO_LOCAL_USER, '', { limit: 1 });
           setZotero({ localAvailable: true, localProbed: true });

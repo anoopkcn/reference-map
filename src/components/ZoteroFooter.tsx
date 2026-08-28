@@ -19,15 +19,19 @@ function isDismissed(): boolean {
  * flashes the wrong state on load.
  */
 export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const enabled = useAppStore((s) => s.settings.zoteroEnabled);
+  const update = useAppStore((s) => s.updateSettings);
   const probed = useAppStore((s) => s.zotero.localProbed);
   const local = useAppStore((s) => s.zotero.localAvailable);
   const hasKey = useAppStore((s) => !!s.settings.zoteroApiKey);
   const username = useAppStore((s) => s.settings.zoteroUsername);
   const [hidden, setHidden] = useState(isDismissed);
 
-  if (!probed && !hasKey) return null;
+  // While enabled, wait for the startup probe so the footer never flashes the wrong state.
+  // Disabled needs no wait: no probe will ever run.
+  if (enabled && !probed && !hasKey) return null;
 
-  if (local || hasKey) {
+  if (enabled && (local || hasKey)) {
     const status = local
       ? `Zotero connected — searching the app on this computer${hasKey ? ' · zotero.org key set' : ''}`
       : `Zotero via zotero.org${username ? ` as ${username}` : ''} — start the Zotero app for instant local search`;
@@ -79,6 +83,12 @@ export function ZoteroFooter({ onOpenSettings }: { onOpenSettings: () => void })
         </button>
       </div>
       <p>Search your library while you type, and save papers (with PDFs) back into it.</p>
+      {!enabled && (
+        <p>
+          <button className="btn primary sm" onClick={() => update({ zoteroEnabled: true })}>Enable Zotero</button>{' '}
+          <span className="faint">— the browser may ask permission to access apps on this device.</span>
+        </p>
+      )}
       {import.meta.env.DEV ? (
         <>
           <p>

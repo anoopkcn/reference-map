@@ -31,8 +31,8 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
 
   // Show the connection status for a key restored from a previous session.
   useEffect(() => {
-    if (open && settings.zoteroApiKey && zotero.status === 'idle') void verifyZotero();
-  }, [open, settings.zoteroApiKey, zotero.status, verifyZotero]);
+    if (open && settings.zoteroEnabled && settings.zoteroApiKey && zotero.status === 'idle') void verifyZotero();
+  }, [open, settings.zoteroEnabled, settings.zoteroApiKey, zotero.status, verifyZotero]);
 
   const commitKey = () => {
     if (key.trim() !== settings.apiKey) update({ apiKey: key.trim() });
@@ -107,6 +107,15 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
           <span className="faint small">Sent only to OpenAlex as the <code>mailto</code> parameter. Leave empty to use the anonymous pool.</span>
         </label>
 
+        <label className="field check">
+          <input type="checkbox" checked={settings.zoteroEnabled} onChange={(e) => update({ zoteroEnabled: e.target.checked })} />
+          <span>Enable Zotero integration</span>
+        </label>
+        <span className="faint small">
+          Search your Zotero library and save papers into it. Enabling lets this app contact the Zotero app on this computer — the
+          browser may ask for permission to access other apps on this device.
+        </span>
+        {settings.zoteroEnabled && (
         <div className="field">
           <span>Zotero API key <span className="faint">(optional)</span></span>
           <div className="row">
@@ -137,6 +146,7 @@ export function SettingsDialog({ open, onClose }: { open: boolean; onClose: () =
             </div>
           )}
         </div>
+        )}
 
         <label className="field">
           <span>References / citations fetched per paper: <strong>{settings.listLimit}</strong></span>
