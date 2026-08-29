@@ -9,6 +9,10 @@ export interface FrameData {
   year: Int16Array;
   /** bit flags, see FLAG_* */
   flags: Uint8Array;
+  /** confluence anchor slot for seed nodes (colour + anchor index), -1 for everything else */
+  seedSlot: Int16Array;
+  /** bitmask of directly-linked seed slots (slots ≥ 32 not represented) */
+  seedMask: Uint32Array;
   labels: string[];
   titles: string[];
   ids: string[];
@@ -42,6 +46,8 @@ export function createFrame(): FrameData {
     role: new Uint8Array(0),
     year: new Int16Array(0),
     flags: new Uint8Array(0),
+    seedSlot: new Int16Array(0),
+    seedMask: new Uint32Array(0),
     labels: [],
     titles: [],
     ids: [],
@@ -55,7 +61,7 @@ export function createFrame(): FrameData {
   };
 }
 
-function grow<T extends Float32Array | Uint8Array | Int16Array | Int32Array>(arr: T, need: number, make: (n: number) => T): T {
+function grow<T extends Float32Array | Uint8Array | Int16Array | Int32Array | Uint32Array>(arr: T, need: number, make: (n: number) => T): T {
   if (arr.length >= need) return arr;
   const next = make(Math.max(need, arr.length * 2, 64));
   next.set(arr);
@@ -68,6 +74,8 @@ export function ensureNodeCapacity(f: FrameData, n: number): void {
   f.role = grow(f.role, n, (k) => new Uint8Array(k));
   f.year = grow(f.year, n, (k) => new Int16Array(k));
   f.flags = grow(f.flags, n, (k) => new Uint8Array(k));
+  f.seedSlot = grow(f.seedSlot, n, (k) => new Int16Array(k));
+  f.seedMask = grow(f.seedMask, n, (k) => new Uint32Array(k));
 }
 
 export function ensureEdgeCapacity(f: FrameData, m: number): void {

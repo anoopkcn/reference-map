@@ -32,8 +32,19 @@
   --node-both: #de9b2c;
   --node-isolated: #a2a29b;
   --node-ring: #1d1d1b;
+  --node-disc: #eae8e0;
   --label: #2a2a27;
   --label-halo: rgba(251, 251, 249, 0.9);
+  /* Confluence seed hues. Order matters: the first four clear all-pairs CVD validation in both
+     themes; later slots lean on position/labels/rings as the secondary encoding. */
+  --seed-1: #2a78d6;
+  --seed-2: #eda100;
+  --seed-3: #e87ba4;
+  --seed-4: #008300;
+  --seed-5: #eb6834;
+  --seed-6: #1baf7a;
+  --seed-7: #4a3aa7;
+  --seed-8: #e34948;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
@@ -81,8 +92,17 @@
     --node-both: #f0b652;
     --node-isolated: #6b6b66;
     --node-ring: #f2f2ee;
+    --node-disc: #3b3b37;
     --label: #e7e7e2;
     --label-halo: rgba(15, 15, 17, 0.9);
+    --seed-1: #3987e5;
+    --seed-2: #c98500;
+    --seed-3: #d55181;
+    --seed-4: #008300;
+    --seed-5: #d95926;
+    --seed-6: #199e70;
+    --seed-7: #9085e9;
+    --seed-8: #e66767;
   }
 }
 
@@ -117,6 +137,15 @@
   --node-both: #f0b652;
   --node-isolated: #6b6b66;
   --node-ring: #f2f2ee;
+  --node-disc: #3b3b37;
   --label: #e7e7e2;
   --label-halo: rgba(15, 15, 17, 0.9);
+  --seed-1: #3987e5;
+  --seed-2: #c98500;
+  --seed-3: #d55181;
+  --seed-4: #008300;
+  --seed-5: #d95926;
+  --seed-6: #199e70;
+  --seed-7: #9085e9;
+  --seed-8: #e66767;
 }

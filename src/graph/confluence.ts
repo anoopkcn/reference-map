@@ -188,6 +188,33 @@ function spreadGroup(members: readonly number[], cx: number, cy: number, tx: Flo
 }
 
 /**
+ * Fill `out` (length n) with a bitmask of the seed SLOTS each node is directly linked to;
+ * a seed node gets (at least) its own slot's bit. Drives the confluence colouring: one bit =
+ * that seed's hue, several bits = neutral disc with one ring segment per bit. Slots ≥ 32
+ * cannot be represented and are dropped (such nodes render in the neutral "unlinked" colour).
+ */
+export function seedMasks(n: number, edgeSrc: ArrayLike<number>, edgeDst: ArrayLike<number>, m: number, seedIdx: readonly number[], out: Uint32Array): void {
+  out.fill(0, 0, n);
+  const slotOf = new Int32Array(n).fill(-1);
+  for (let j = 0; j < seedIdx.length && j < 32; j++) {
+    const idx = seedIdx[j]!;
+    if (idx >= 0 && idx < n) {
+      slotOf[idx] = j;
+      out[idx] = 1 << j;
+    }
+  }
+  for (let e = 0; e < m; e++) {
+    const a = edgeSrc[e]!;
+    const b = edgeDst[e]!;
+    if (a < 0 || b < 0 || a >= n || b >= n) continue;
+    const sa = slotOf[a]!;
+    const sb = slotOf[b]!;
+    if (sa >= 0) out[b] = (out[b]! | (1 << sa)) >>> 0;
+    if (sb >= 0) out[a] = (out[a]! | (1 << sb)) >>> 0;
+  }
+}
+
+/**
  * Order seeds so that pairs with overlapping reference lists sit on adjacent anchors (bridge
  * papers between adjacent anchors read correctly; a barycenter between non-adjacent anchors is
  * the layout's known ambiguity). Greedy chain on Jaccard similarity of the cached refs lists;

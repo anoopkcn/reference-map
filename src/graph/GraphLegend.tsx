@@ -2,15 +2,17 @@ import { NodeRole, type NodeRole as NodeRoleType } from '../types';
 import { useAppStore } from '../store';
 import { roleIsVisible } from './frame';
 
-const ITEMS: { role: NodeRoleType; className: string; label: string; description?: string }[] = [
-  { role: NodeRole.Seed, className: 'seed', label: 'Seed paper' },
-  { role: NodeRole.Cited, className: 'cited', label: 'Reference', description: '— cited by a paper in the map' },
-  { role: NodeRole.Citing, className: 'citing', label: 'Citation', description: '— cites a paper in the map' },
-  { role: NodeRole.Both, className: 'both', label: 'Both', description: '— reference and citation' },
+const ITEMS: { role: NodeRoleType; className: string; shapeClass: string; label: string; description?: string }[] = [
+  { role: NodeRole.Cited, className: 'cited', shapeClass: 'shape-solid', label: 'Reference', description: '— cited by a paper in the map' },
+  { role: NodeRole.Citing, className: 'citing', shapeClass: 'shape-hollow', label: 'Citation', description: '— cites a paper in the map' },
+  { role: NodeRole.Both, className: 'both', shapeClass: 'shape-both', label: 'Both', description: '— reference and citation' },
 ];
 
 export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask: number; onToggleRole: (role: NodeRoleType) => void }) {
   const layoutMode = useAppStore((s) => s.settings.layoutMode);
+  // In confluence and timeline, colour = seed identity (the labelled seeds on the canvas name
+  // the hues), so the role dots switch to the shape glyphs the canvas uses there.
+  const seedColoured = layoutMode !== 'force';
   return (
     <div className="graph-legend" aria-label="Filter papers by category">
       {ITEMS.map((item) => {
@@ -24,16 +26,16 @@ export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask
             onClick={() => onToggleRole(item.role)}
             key={item.role}
           >
-            <span className={`dot ${item.className}`} />
+            <span className={`dot ${seedColoured ? item.shapeClass : item.className}`} />
             <span>{item.label}</span>
             {item.description && <span className="faint">{item.description}</span>}
           </button>
         );
       })}
       <div className="legend-note faint small">
-        Size ∝ citation count · ring = connections loaded · dot = pinned
-        {layoutMode === 'timeline' && ' · x = year (older → newer) · y = citations (log)'}
-        {layoutMode === 'confluence' && ' · outside the circle = tied to one seed · between anchors = bridges · center = shared by all seeds'}
+        {layoutMode === 'confluence' && 'Ring segments = linked seeds · size ∝ citation count · behind a seed = its papers · between seeds = bridges · centre = shared'}
+        {layoutMode === 'timeline' && 'Ring segments = linked seeds · size ∝ citation count · x = year (older → newer) · y = citations (log)'}
+        {layoutMode === 'force' && 'Size ∝ citation count · ring = connections loaded · dot = pinned'}
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import type { AppStore } from '../store/store';
 import type { LayoutMode } from '../types';
 import { ensureEdgeCapacity, ensureNodeCapacity, FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, type FrameData } from './frame';
-import { affinityTargets, anchorPositions, computeAffinity, orderSeeds } from './confluence';
+import { affinityTargets, anchorPositions, computeAffinity, orderSeeds, seedMasks } from './confluence';
 import type { MainToWorker, WorkerToMain } from './protocol';
 import { citationsToY, yearDomain, yearToX } from './timeline';
 
@@ -208,6 +208,18 @@ export class GraphBridge {
       if (s.expanding.has(node.id)) fl |= FLAG_EXPANDING;
       f.flags[i] = fl;
     }
+    // Confluence colouring metadata: anchor slot per seed (same ordering the targets use) and
+    // per-node linked-seed bitmask. Kept fresh in every mode so switching to confluence is instant.
+    const ordered = this.orderedSeeds();
+    const slotOf = new Map<string, number>();
+    ordered.forEach((id, j) => slotOf.set(id, j));
+    const seedIdx: number[] = [];
+    for (const id of ordered) {
+      const idx = g.nodes.get(id)?.idx;
+      if (idx !== undefined && idx < f.n) seedIdx.push(idx);
+    }
+    for (let i = 0; i < f.n; i++) f.seedSlot[i] = slotOf.get(f.ids[i]!) ?? -1;
+    seedMasks(f.n, f.edgeSrc, f.edgeDst, f.m, seedIdx, f.seedMask);
     // After a reset/addNodes the worker's nodes are fresh and their targets are lost — force
     // a resend then; otherwise skip no-op sends so revalidation syncs don't keep the sim hot.
     if (this.lastMode !== 'force') this.sendTargets(diff.reset || force || diff.newNodes.length > 0);
@@ -263,11 +275,17 @@ export class GraphBridge {
    * barycenter of its seed-affinity vector. Structure-only inputs, so the no-op comparison
    * in sendTargets naturally absorbs attribute-only syncs.
    */
+  /** Seeds in anchor order — the single ordering shared by targets, colours, legend and tooltip. */
+  private orderedSeeds(): string[] {
+    const s = this.store.getState();
+    return orderSeeds([...s.graph.seeds], (id) => s.lists.get(id)?.refs?.ids);
+  }
+
   private confluenceTargets(tx: Float32Array, ty: Float32Array): void {
     const s = this.store.getState();
     const g = s.graph;
     const f = this.frame;
-    const ordered = orderSeeds([...g.seeds], (id) => s.lists.get(id)?.refs?.ids);
+    const ordered = this.orderedSeeds();
     const seedIdx: number[] = [];
     for (const id of ordered) {
       const idx = g.nodes.get(id)?.idx;

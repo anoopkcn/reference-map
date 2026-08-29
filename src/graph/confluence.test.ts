@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { affinityTargets, anchorPositions, anchorRadius, computeAffinity, orderSeeds } from './confluence';
+import { affinityTargets, anchorPositions, anchorRadius, computeAffinity, orderSeeds, seedMasks } from './confluence';
 
 const row = (w: Float32Array, k: number, i: number): number[] => Array.from(w.subarray(i * k, (i + 1) * k));
 
@@ -156,6 +156,24 @@ describe('anchorPositions / anchorRadius', () => {
   it('radius grows with seed count and map size', () => {
     expect(anchorRadius(8, 100)).toBeGreaterThan(anchorRadius(2, 100));
     expect(anchorRadius(2, 2000)).toBeGreaterThan(anchorRadius(2, 100));
+  });
+});
+
+describe('seedMasks', () => {
+  it('sets one bit per directly linked seed slot, and seeds carry their own bit', () => {
+    // seeds at idx 0 (slot 0) and 3 (slot 1); node 1 links to both, node 2 only to seed 0, node 4 to nobody
+    const out = new Uint32Array(5);
+    seedMasks(5, [0, 1, 2], [1, 3, 0], 3, [0, 3], out);
+    expect(out[0]).toBe(0b01);
+    expect(out[3]).toBe(0b10);
+    expect(out[1]).toBe(0b11);
+    expect(out[2]).toBe(0b01);
+    expect(out[4]).toBe(0);
+  });
+  it('ignores out-of-range seed indices and clears stale bits from a previous fill', () => {
+    const out = new Uint32Array([7, 7]);
+    seedMasks(2, [0], [1], 1, [99], out);
+    expect(Array.from(out)).toEqual([0, 0]);
   });
 });
 

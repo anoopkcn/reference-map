@@ -147,6 +147,10 @@ button:disabled { cursor: default; opacity: 0.5; }
 .dot.citing { background: var(--node-citing); }
 .dot.both { background: var(--node-both); }
 .dot.isolated { background: var(--node-isolated); }
+/* confluence direction glyphs: filled = reference, outlined = citation, filled + ring = both */
+.dot.shape-solid { background: var(--text-muted); }
+.dot.shape-hollow { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-muted); }
+.dot.shape-both { background: var(--text-muted); box-shadow: 0 0 0 1.5px var(--surface), 0 0 0 2.5px var(--text-muted); }
 
 .meta { min-width: 0; }
 .meta .title { margin: 0; font-size: var(--fs-lg); font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; letter-spacing: -0.005em; }
@@ -249,6 +253,9 @@ button:disabled { cursor: default; opacity: 0.5; }
 .legend-toggle[aria-pressed="false"] { opacity: .42; }
 .legend-toggle[aria-pressed="false"] .dot { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
 .legend-note { display: flex; align-items: center; gap: 6px; }
+.tt-seeds { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+.tt-seed-row { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.tt-seed-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .graph-empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); pointer-events: none; text-align: center; padding: 20px; }
 .graph-empty svg { color: var(--text-faint); }
 .graph-tooltip { position: absolute; left: 0; top: 0; z-index: 3; max-width: 320px; padding: 8px 10px; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-2); font-size: var(--fs-xs); pointer-events: none; opacity: 0; transition: opacity .08s; will-change: transform; }

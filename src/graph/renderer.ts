@@ -1,4 +1,4 @@
-import type { LabelMode, LayoutMode } from '../types';
+import { NodeRole, type LabelMode, type LayoutMode } from '../types';
 import { anchorRadius } from './confluence';
 import { FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, roleIsVisible, type FrameData } from './frame';
 import { citationTickStep, citationsToY, formatCount, yearDomain, yearTickStep, yearToX, type YearDomain } from './timeline';
@@ -19,6 +19,10 @@ export interface GraphTheme {
   labelHalo: string;
   accent: string;
   muted: string;
+  /** confluence seed hues by anchor slot (wraps past 8) */
+  seeds: string[];
+  /** neutral fill of multi-seed discs in confluence mode */
+  disc: string;
 }
 
 const FALLBACK: GraphTheme = {
@@ -31,6 +35,8 @@ const FALLBACK: GraphTheme = {
   labelHalo: 'rgba(251,251,249,0.9)',
   accent: '#1f6fb2',
   muted: '#9a9a93',
+  seeds: ['#2a78d6', '#eda100', '#e87ba4', '#008300', '#eb6834', '#1baf7a', '#4a3aa7', '#e34948'],
+  disc: '#eae8e0',
 };
 
 /** Read the graph palette from CSS custom properties (once per theme change). */
@@ -47,6 +53,8 @@ export function readTheme(el: Element): GraphTheme {
     labelHalo: v('--label-halo', FALLBACK.labelHalo),
     accent: v('--accent', FALLBACK.accent),
     muted: v('--text-faint', FALLBACK.muted),
+    seeds: FALLBACK.seeds.map((fb, i) => v(`--seed-${i + 1}`, fb)),
+    disc: v('--node-disc', FALLBACK.disc),
   };
 }
 
@@ -105,7 +113,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
 
   // ---- layout scenery (under everything) ----
   if (o.layoutMode === 'timeline') drawTimelineAxes(ctx, view, theme, o, dom, x0, y0, x1, y1);
-  else if (o.layoutMode === 'confluence') drawConfluenceGuide(ctx, f, theme, k);
+  else if (o.layoutMode === 'confluence') drawConfluenceWashes(ctx, f, theme, pos, x0, y0, x1, y1);
 
   // ---- edges ----
   ctx.lineWidth = Math.max(0.6, 1) / k;
@@ -128,65 +136,87 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // highlighted edges of the focus node
+  // highlighted edges of the focus node (in seed-coloured modes, edges to a seed take its hue)
   if (dim) {
-    ctx.strokeStyle = theme.edgeHi;
     ctx.lineWidth = 1.6 / k;
-    ctx.beginPath();
-    for (let i = 0; i < f.m; i++) {
-      const a = f.edgeSrc[i]!;
-      const b = f.edgeDst[i]!;
-      if (!visible(a) || !visible(b)) continue;
-      if (a !== focus && b !== focus) continue;
-      ctx.moveTo(pos[2 * a]!, pos[2 * a + 1]!);
-      ctx.lineTo(pos[2 * b]!, pos[2 * b + 1]!);
+    if (o.layoutMode !== 'force') {
+      for (let i = 0; i < f.m; i++) {
+        const a = f.edgeSrc[i]!;
+        const b = f.edgeDst[i]!;
+        if (!visible(a) || !visible(b)) continue;
+        if (a !== focus && b !== focus) continue;
+        const other = a === focus ? b : a;
+        const slot = f.seedSlot[other]! >= 0 ? f.seedSlot[other]! : f.seedSlot[focus]!;
+        ctx.strokeStyle = slot >= 0 ? theme.seeds[slot % theme.seeds.length]! : theme.edgeHi;
+        ctx.beginPath();
+        ctx.moveTo(pos[2 * a]!, pos[2 * a + 1]!);
+        ctx.lineTo(pos[2 * b]!, pos[2 * b + 1]!);
+        ctx.stroke();
+      }
+    } else {
+      ctx.strokeStyle = theme.edgeHi;
+      ctx.beginPath();
+      for (let i = 0; i < f.m; i++) {
+        const a = f.edgeSrc[i]!;
+        const b = f.edgeDst[i]!;
+        if (!visible(a) || !visible(b)) continue;
+        if (a !== focus && b !== focus) continue;
+        ctx.moveTo(pos[2 * a]!, pos[2 * a + 1]!);
+        ctx.lineTo(pos[2 * b]!, pos[2 * b + 1]!);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
     // arrowheads on highlighted edges (direction: citing → cited)
     drawArrows(ctx, f, focus, theme.edgeHi, k, o.visibleRoleMask);
   }
 
-  // ---- nodes, batched per role and age bucket ----
+  // ---- nodes ----
   const neighbors = o.neighbors;
-  // In timeline mode position already encodes the year, so the age fade is flattened.
-  const yrMin = dom?.min ?? 0;
-  const yrSpan = dom ? dom.max - dom.min : 0;
-  const fade = o.layoutMode !== 'timeline' && yrSpan > 0;
-  if (ageBucket.length < f.n) ageBucket = new Uint8Array(f.n);
-  for (let i = 0; i < f.n; i++) {
-    const yr = f.year[i]!;
-    // unknown years and degenerate ranges render fully opaque
-    ageBucket[i] = fade && yr > 0 ? Math.round(((yr - yrMin) / yrSpan) * (AGE_BUCKETS - 1)) : AGE_BUCKETS - 1;
-  }
-  for (let pass = 0; pass < 2; pass++) {
-    // pass 0: dimmed nodes, pass 1: normal/highlighted (drawn on top)
-    for (let role = 4; role >= 0; role--) {
-      ctx.fillStyle = theme.node[role]!;
-      for (let bucket = 0; bucket < AGE_BUCKETS; bucket++) {
-        ctx.beginPath();
-        let any = false;
-        for (let i = 0; i < f.n; i++) {
-          if (f.role[i] !== role) continue;
-          if (ageBucket[i] !== bucket) continue;
-          if (!visible(i)) continue;
-          const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
-          if ((pass === 0) !== isDim) continue;
-          const x = pos[2 * i]!;
-          const y = pos[2 * i + 1]!;
-          if (x < x0 || x > x1 || y < y0 || y > y1) continue;
-          const r = f.r[i]!;
-          ctx.moveTo(x + r, y);
-          ctx.arc(x, y, r, 0, TWO_PI);
-          any = true;
-        }
-        if (any) {
-          ctx.globalAlpha = (pass === 0 ? 0.25 : 1) * (AGE_MIN_ALPHA + ((1 - AGE_MIN_ALPHA) * bucket) / (AGE_BUCKETS - 1));
-          ctx.fill();
+  if (o.layoutMode !== 'force') {
+    // Confluence and timeline: colour = seed membership, shape = direction (no age fade —
+    // position already encodes structure/year there).
+    drawSeedColouredNodes(ctx, f, theme, pos, x0, y0, x1, y1, k, visible, dim, focus, neighbors);
+  } else {
+    // Batched per role and age bucket.
+    const yrMin = dom?.min ?? 0;
+    const yrSpan = dom ? dom.max - dom.min : 0;
+    const fade = o.layoutMode === 'force' && yrSpan > 0;
+    if (ageBucket.length < f.n) ageBucket = new Uint8Array(f.n);
+    for (let i = 0; i < f.n; i++) {
+      const yr = f.year[i]!;
+      // unknown years and degenerate ranges render fully opaque
+      ageBucket[i] = fade && yr > 0 ? Math.round(((yr - yrMin) / yrSpan) * (AGE_BUCKETS - 1)) : AGE_BUCKETS - 1;
+    }
+    for (let pass = 0; pass < 2; pass++) {
+      // pass 0: dimmed nodes, pass 1: normal/highlighted (drawn on top)
+      for (let role = 4; role >= 0; role--) {
+        ctx.fillStyle = theme.node[role]!;
+        for (let bucket = 0; bucket < AGE_BUCKETS; bucket++) {
+          ctx.beginPath();
+          let any = false;
+          for (let i = 0; i < f.n; i++) {
+            if (f.role[i] !== role) continue;
+            if (ageBucket[i] !== bucket) continue;
+            if (!visible(i)) continue;
+            const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
+            if ((pass === 0) !== isDim) continue;
+            const x = pos[2 * i]!;
+            const y = pos[2 * i + 1]!;
+            if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+            const r = f.r[i]!;
+            ctx.moveTo(x + r, y);
+            ctx.arc(x, y, r, 0, TWO_PI);
+            any = true;
+          }
+          if (any) {
+            ctx.globalAlpha = (pass === 0 ? 0.25 : 1) * (AGE_MIN_ALPHA + ((1 - AGE_MIN_ALPHA) * bucket) / (AGE_BUCKETS - 1));
+            ctx.fill();
+          }
         }
       }
     }
+    ctx.globalAlpha = 1;
   }
-  ctx.globalAlpha = 1;
 
   // ---- rings: seeds, expanded, pinned, focus ----
   ctx.lineWidth = 1.5 / k;
@@ -349,25 +379,200 @@ function drawTimelineAxes(
   }
 }
 
+/** Alpha of the per-seed territory washes behind the confluence layout. */
+const WASH_ALPHA = 0.06;
+
+/** #rrggbb → rgba(); null for anything else (then the wash is simply skipped). */
+function hexAlpha(hex: string, a: number): string | null {
+  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 /**
- * Confluence guide: a dashed hairline circle through the seed anchors, splitting the canvas
- * into its three reading zones (outside = single-seed territories, inside = bridges, center =
- * shared foundations). Radius comes from the shared confluence module with the same inputs the
- * bridge used (seed count, node count), so the circle passes exactly through the anchors.
+ * Faint radial wash in each seed's hue around its anchor — marks the territories the way the
+ * prototype did, without hard boundaries. Radius follows the shared anchor geometry so washes
+ * scale with the layout.
  */
-function drawConfluenceGuide(ctx: CanvasRenderingContext2D, f: FrameData, theme: GraphTheme, k: number): void {
+function drawConfluenceWashes(ctx: CanvasRenderingContext2D, f: FrameData, theme: GraphTheme, pos: Float32Array, x0: number, y0: number, x1: number, y1: number): void {
   let seeds = 0;
-  for (let i = 0; i < f.n; i++) if (f.flags[i]! & FLAG_SEED) seeds++;
-  const r = anchorRadius(seeds, f.n);
-  if (r <= 0) return;
-  ctx.strokeStyle = theme.muted;
-  ctx.globalAlpha = AXIS_GRID_ALPHA;
-  ctx.lineWidth = 1 / k;
-  ctx.setLineDash([4 / k, 6 / k]);
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, TWO_PI);
-  ctx.stroke();
-  ctx.setLineDash([]);
+  for (let i = 0; i < f.n; i++) if (f.seedSlot[i]! >= 0) seeds++;
+  const reach = Math.max(220, anchorRadius(seeds, f.n) * 1.15);
+  for (let i = 0; i < f.n; i++) {
+    const slot = f.seedSlot[i]!;
+    if (slot < 0) continue;
+    const color = hexAlpha(theme.seeds[slot % theme.seeds.length]!, WASH_ALPHA);
+    if (!color) continue;
+    const x = pos[2 * i]!;
+    const y = pos[2 * i + 1]!;
+    if (x + reach < x0 || x - reach > x1 || y + reach < y0 || y - reach > y1) continue;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, reach);
+    g.addColorStop(0, color);
+    g.addColorStop(1, hexAlpha(theme.seeds[slot % theme.seeds.length]!, 0)!);
+    ctx.fillStyle = g;
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  }
+}
+
+function popcount(v: number): number {
+  v = v - ((v >> 1) & 0x55555555);
+  v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
+  return (((v + (v >> 4)) & 0x0f0f0f0f) * 0x01010101) >> 24;
+}
+
+/**
+ * Seed-based node colouring (confluence and timeline): papers linked to one seed fill in that
+ * seed's hue; papers linked to several become a neutral disc with one ring segment per linked
+ * seed, each segment aimed at that seed's current position (a positional secondary encoding on
+ * top of hue); seeds render as a hue donut with a background core; unlinked papers stay in the
+ * muted isolated colour.
+ */
+function drawSeedColouredNodes(
+  ctx: CanvasRenderingContext2D,
+  f: FrameData,
+  theme: GraphTheme,
+  pos: Float32Array,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  k: number,
+  visible: (i: number) => boolean,
+  dim: boolean,
+  focus: number,
+  neighbors: Set<number> | null,
+): void {
+  // world position of each seed slot, for aiming ring segments
+  const slotX = new Float32Array(32);
+  const slotY = new Float32Array(32);
+  let usedSlots = 0;
+  for (let i = 0; i < f.n; i++) {
+    const slot = f.seedSlot[i]!;
+    if (slot >= 0 && slot < 32) {
+      slotX[slot] = pos[2 * i]!;
+      slotY[slot] = pos[2 * i + 1]!;
+      if (slot + 1 > usedSlots) usedSlots = slot + 1;
+    }
+  }
+  const hue = (slot: number) => theme.seeds[slot % theme.seeds.length]!;
+  for (let pass = 0; pass < 2; pass++) {
+    // pass 0: dimmed nodes, pass 1: normal/highlighted (drawn on top)
+    ctx.globalAlpha = pass === 0 ? 0.25 : 1;
+    const wanted = (i: number): boolean => {
+      if (!visible(i)) return false;
+      const isDim = dim && i !== focus && !(neighbors && neighbors.has(i));
+      return (pass === 0) === isDim;
+    };
+    const inView = (x: number, y: number) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+
+    // Direction shape (restores the reference/citation distinction without spending colour):
+    // filled = reference (a paper in the map cites it), outlined = citation (it cites a paper
+    // in the map), filled + detached ring = both. Isolated papers render filled.
+    const hollowLw = 1.7 / k;
+    const shapeOf = (i: number): 0 | 1 | 2 => (f.role[i] === NodeRole.Citing ? 1 : f.role[i] === NodeRole.Both ? 2 : 0);
+
+    // single-seed papers (and seedless ones in the muted colour), batched per slot × shape
+    const drawStyled = (color: string, member: (i: number) => boolean) => {
+      const path = (shape: 0 | 1 | 2, inset: number): boolean => {
+        ctx.beginPath();
+        let any = false;
+        for (let i = 0; i < f.n; i++) {
+          if (f.seedSlot[i]! >= 0 || !member(i) || shapeOf(i) !== shape || !wanted(i)) continue;
+          const x = pos[2 * i]!;
+          const y = pos[2 * i + 1]!;
+          if (!inView(x, y)) continue;
+          const r = Math.max(0.5 / k, f.r[i]! + inset);
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, TWO_PI);
+          any = true;
+        }
+        return any;
+      };
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      if (path(0, 0)) ctx.fill(); // references: solid
+      if (path(2, 0)) ctx.fill(); // both: solid…
+      ctx.lineWidth = 1.2 / k;
+      if (path(2, 2.2 / k)) ctx.stroke(); // …plus a detached ring
+      // citations: outlined — stroked singly because the ring width shrinks with the node,
+      // so the hole stays visible on the small (typically recent, low-citation) papers
+      for (let i = 0; i < f.n; i++) {
+        if (f.seedSlot[i]! >= 0 || !member(i) || shapeOf(i) !== 1 || !wanted(i)) continue;
+        const x = pos[2 * i]!;
+        const y = pos[2 * i + 1]!;
+        if (!inView(x, y)) continue;
+        const r = f.r[i]!;
+        const lw = Math.min(hollowLw, Math.max(0.9 / k, r * 0.42));
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.5 / k, r - lw / 2), 0, TWO_PI);
+        ctx.stroke();
+      }
+    };
+    for (let slot = 0; slot < usedSlots; slot++) drawStyled(hue(slot), (i) => f.seedMask[i] === (1 << slot) >>> 0);
+    drawStyled(theme.node[4]!, (i) => f.seedMask[i] === 0);
+
+    // bridges: neutral disc + one aimed ring segment per linked seed (few nodes — drawn singly)
+    for (let i = 0; i < f.n; i++) {
+      const mask = f.seedMask[i]!;
+      if (f.seedSlot[i]! >= 0 || popcount(mask) < 2 || !wanted(i)) continue;
+      const x = pos[2 * i]!;
+      const y = pos[2 * i + 1]!;
+      if (!inView(x, y)) continue;
+      const r = f.r[i]!;
+      const shape = shapeOf(i);
+      ctx.fillStyle = theme.disc;
+      ctx.strokeStyle = theme.disc;
+      ctx.beginPath();
+      if (shape === 1) {
+        const lw = Math.min(hollowLw, Math.max(0.9 / k, r * 0.42));
+        ctx.lineWidth = lw;
+        ctx.arc(x, y, Math.max(0.5 / k, r - lw / 2), 0, TWO_PI);
+        ctx.stroke();
+      } else {
+        ctx.arc(x, y, r, 0, TWO_PI);
+        ctx.fill();
+      }
+      const bits = popcount(mask);
+      const span = Math.PI * (0.3 + 0.55 / bits);
+      const lw = Math.max(2.2 / k, r * 0.4);
+      ctx.lineWidth = lw;
+      for (let slot = 0; slot < usedSlots; slot++) {
+        if (!(mask & (1 << slot))) continue;
+        const th = Math.atan2(slotY[slot]! - y, slotX[slot]! - x);
+        ctx.strokeStyle = hue(slot);
+        ctx.beginPath();
+        ctx.arc(x, y, r + lw / 2 + 0.6 / k, th - span / 2, th + span / 2);
+        ctx.stroke();
+      }
+      if (shape === 2) {
+        // both: detached neutral ring outside the seed arcs
+        ctx.strokeStyle = theme.disc;
+        ctx.lineWidth = 1.2 / k;
+        ctx.beginPath();
+        ctx.arc(x, y, r + lw + 1.8 / k, 0, TWO_PI);
+        ctx.stroke();
+      }
+    }
+
+    // seeds: hue donut with a background core
+    for (let i = 0; i < f.n; i++) {
+      const slot = f.seedSlot[i]!;
+      if (slot < 0 || !wanted(i)) continue;
+      const x = pos[2 * i]!;
+      const y = pos[2 * i + 1]!;
+      if (!inView(x, y)) continue;
+      const r = f.r[i]!;
+      ctx.fillStyle = hue(slot);
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, TWO_PI);
+      ctx.fill();
+      ctx.fillStyle = theme.bg;
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(1.6 / k, r * 0.3), 0, TWO_PI);
+      ctx.fill();
+    }
+  }
   ctx.globalAlpha = 1;
 }
 
