@@ -89,6 +89,40 @@ describe('affinityTargets', () => {
     expect(ty[1]).toBeNaN();
   });
 
+  it('fans same-seed papers into distinct pre-spaced targets beyond their anchor', () => {
+    // shared targets would make the target force fight collide every tick (visible wiggle)
+    const n = 13;
+    const w = new Float32Array(n * 3);
+    for (const i of [0, 1, 2]) w[i * 3 + 1] = 1; // three papers belonging entirely to seed 1
+    const tx = new Float32Array(n);
+    const ty = new Float32Array(n);
+    affinityTargets(w, k3, anchors, n, tx, ty);
+    const a = anchors[1]!;
+    const anchorDist = Math.hypot(a.x, a.y);
+    for (const i of [0, 1, 2]) {
+      expect(Math.hypot(tx[i]!, ty[i]!)).toBeGreaterThan(anchorDist); // outside the anchor circle
+      expect(tx[i]! * a.x + ty[i]! * a.y).toBeGreaterThan(0); // on that seed's side
+    }
+    for (const [i, j] of [[0, 1], [0, 2], [1, 2]] as const) {
+      expect(Math.hypot(tx[i]! - tx[j]!, ty[i]! - ty[j]!)).toBeGreaterThan(10);
+    }
+  });
+
+  it('spreads nodes with an identical mixed signature around their shared point', () => {
+    const n = 13;
+    const w = new Float32Array(n * 3);
+    for (const i of [0, 1]) {
+      w[i * 3 + 0] = 0.5;
+      w[i * 3 + 1] = 0.5;
+    }
+    const tx = new Float32Array(n);
+    const ty = new Float32Array(n);
+    affinityTargets(w, k3, anchors, n, tx, ty);
+    const d = Math.hypot(tx[0]! - tx[1]!, ty[0]! - ty[1]!);
+    expect(d).toBeGreaterThan(10); // no longer the same point…
+    expect(d).toBeLessThan(25); // …but still one visual cluster
+  });
+
   it('places a two-seed bridge between its anchors, closer than either anchor', () => {
     const n = 13;
     const w = new Float32Array(n * 3);

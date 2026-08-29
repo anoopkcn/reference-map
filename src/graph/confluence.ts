@@ -19,6 +19,17 @@ const AFFINITY_EPS = 1e-6;
 /** Radial push: specificity h ∈ (1/k, 1] scales the barycenter by SPEC_BASE + SPEC_RANGE·h. */
 const SPEC_BASE = 0.42;
 const SPEC_RANGE = 0.94;
+/** A share above this counts as "belongs to one seed" — the node joins that seed's outward fan. */
+const PURE_SHARE = 0.9999;
+const GOLDEN_ANGLE = 2.399963229728653;
+/**
+ * World px between phyllotaxis rings when several nodes share one target. Deliberately a
+ * constant (not derived from node radii): radii change on citation revalidation, and radius-
+ * dependent targets would defeat the bridge's no-op send comparison and keep the sim hot.
+ */
+const SPREAD = 16;
+/** Gap between a seed anchor and the inner edge of its territory fan. */
+const FAN_GAP = 28;
 
 /** Anchor-circle radius: grows with seed count and (gently) with map size. 0 when < 2 seeds. */
 export function anchorRadius(seedCount: number, nodeCount: number): number {
@@ -89,13 +100,21 @@ export function computeAffinity(n: number, edgeSrc: ArrayLike<number>, edgeDst: 
 /**
  * Fill tx/ty (length n) from affinity rows: seeds land exactly on their anchor; other nodes at
  * their affinity barycenter scaled by specificity (Herfindahl of the normalized row), so a
- * single-seed paper is pushed radially beyond its anchor while an evenly-shared one stays near
- * the center. Unreached rows get NaN (the sim falls back to gentle centering).
+ * single-seed paper sits beyond its anchor while an evenly-shared one stays near the center.
+ * Unreached rows get NaN (the sim falls back to gentle centering).
+ *
+ * Nodes that would land on the SAME point are pre-spread on a golden-angle spiral instead of
+ * being left for the collide force to untangle — dozens of nodes pulled at full strength onto
+ * one coordinate fight collide every tick and the whole cluster wiggles until alpha dies.
+ * Single-seed papers form one outward fan per seed (inner edge FAN_GAP behind the anchor);
+ * nodes with an identical mixed signature spread in place around their shared barycenter.
+ * Spiral order follows node index, so the layout is stable across resends.
  */
 export function affinityTargets(weights: Float32Array, seedIdx: readonly number[], anchors: readonly Point[], n: number, tx: Float32Array, ty: Float32Array): void {
   const k = seedIdx.length;
   const seedRow = new Map<number, number>();
   for (let j = 0; j < k; j++) seedRow.set(seedIdx[j]!, j);
+  const groups = new Map<string, number[]>();
   for (let i = 0; i < n; i++) {
     const sj = seedRow.get(i);
     if (sj !== undefined) {
@@ -113,15 +132,58 @@ export function affinityTargets(weights: Float32Array, seedIdx: readonly number[
     let bx = 0;
     let by = 0;
     let h = 0;
+    let top = 0;
+    let topJ = 0;
     for (let j = 0; j < k; j++) {
       const p = weights[i * k + j]! / sum;
       bx += p * anchors[j]!.x;
       by += p * anchors[j]!.y;
       h += p * p;
+      if (p > top) {
+        top = p;
+        topJ = j;
+      }
     }
-    const push = SPEC_BASE + SPEC_RANGE * h;
-    tx[i] = bx * push;
-    ty[i] = by * push;
+    let key: string;
+    if (top >= PURE_SHARE) {
+      key = `s${topJ}`; // this seed's territory fan; center depends on group size (pass 2)
+    } else {
+      const push = SPEC_BASE + SPEC_RANGE * h;
+      tx[i] = bx * push;
+      ty[i] = by * push;
+      key = `m${tx[i]},${ty[i]}`; // identical rows → identical floats → same group
+    }
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = []));
+    g.push(i);
+  }
+  for (const [key, members] of groups) {
+    if (key.charCodeAt(0) === 115 /* 's' */) {
+      const a = anchors[Number(key.slice(1))]!;
+      const len = Math.hypot(a.x, a.y);
+      let cx = a.x;
+      let cy = a.y;
+      if (len > 1e-6) {
+        // shift the fan's center outward so its inner edge clears the anchor by FAN_GAP
+        const scale = (len + FAN_GAP + SPREAD * Math.sqrt(members.length - 1)) / len;
+        cx = a.x * scale;
+        cy = a.y * scale;
+      }
+      spreadGroup(members, cx, cy, tx, ty);
+    } else if (members.length > 1) {
+      spreadGroup(members, tx[members[0]!]!, ty[members[0]!]!, tx, ty);
+    }
+  }
+}
+
+/** Golden-angle spiral around (cx, cy): member 0 at the center, rings SPREAD apart. */
+function spreadGroup(members: readonly number[], cx: number, cy: number, tx: Float32Array, ty: Float32Array): void {
+  for (let j = 0; j < members.length; j++) {
+    const i = members[j]!;
+    const r = SPREAD * Math.sqrt(j);
+    const a = j * GOLDEN_ANGLE;
+    tx[i] = cx + r * Math.cos(a);
+    ty[i] = cy + r * Math.sin(a);
   }
 }
 
