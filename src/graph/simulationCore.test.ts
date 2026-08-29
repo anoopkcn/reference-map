@@ -60,6 +60,23 @@ describe('SimulationCore', () => {
     expect(Math.abs(c.nodes[2]!.y - -50)).toBeLessThan(2);
   });
 
+  it('confluence mode is target-driven like timeline (links detached, retargeting works)', () => {
+    const c = new SimulationCore();
+    c.addNodes([5, 5], [0, 0], [0, 0]);
+    c.addLinks([0], [1]);
+    c.setMode('confluence');
+    c.setTargets([-120, 120], [40, -40]);
+    c.reheat(1);
+    for (let i = 0; i < 300; i++) c.tick();
+    // the link would hold them ~linkDistance apart if it were still attached
+    expect(Math.abs(c.nodes[0]!.x - -120)).toBeLessThan(2);
+    expect(Math.abs(c.nodes[1]!.x - 120)).toBeLessThan(2);
+    c.setTargets([0, 0], [0, 0]);
+    c.reheat(1);
+    for (let i = 0; i < 300; i++) c.tick();
+    expect(Math.abs(c.nodes[0]!.x)).toBeLessThan(20); // only collide separates them now
+  });
+
   it('NaN target falls back to centering on that axis only', () => {
     const c = new SimulationCore();
     c.addNodes([5], [200], [200]);

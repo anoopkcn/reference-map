@@ -8,7 +8,7 @@ export interface SimParams {
   chargeDistanceMax: number;
   collidePadding: number;
   centerStrength: number;
-  /** forceX/Y strength toward timeline targets; collide is alpha-independent so it still wins locally. */
+  /** forceX/Y strength toward layout targets (timeline, confluence); collide is alpha-independent so it still wins locally. */
   timelineStrength: number;
   alphaDecay: number;
   velocityDecay: number;

@@ -158,7 +158,7 @@ export class SimulationCore {
       this.nodes[i]!.ty = NaN;
     }
     // forceX/Y snapshot their accessors at initialize time — rebind so new targets take effect.
-    if (this.mode === 'timeline') this.applyLayoutForces();
+    if (this.mode !== 'force') this.applyLayoutForces();
   }
 
   /**
@@ -169,8 +169,9 @@ export class SimulationCore {
   private applyLayoutForces(): void {
     const p = this.params;
     const has = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v);
-    if (this.mode === 'timeline') {
-      // Deterministic coordinates: link/charge would push nodes off them, so both are detached.
+    if (this.mode !== 'force') {
+      // Target-driven modes (timeline, confluence) — deterministic coordinates: link/charge
+      // would push nodes off them, so both are detached.
       // (linkForce keeps absorbing addLinks while detached — it shares the same nodes array,
       // and rebinding on the way back to force mode re-initializes it.) Nodes without a target
       // on an axis fall back to gentle centering on that axis.

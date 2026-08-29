@@ -461,6 +461,8 @@ describe('store (two providers)', () => {
     expect(store.getState().settings.layoutMode).toBe('force');
     store.getState().updateSettings({ layoutMode: 'timeline' });
     expect(store.getState().settings.layoutMode).toBe('timeline');
+    store.getState().updateSettings({ layoutMode: 'confluence' });
+    expect(store.getState().settings.layoutMode).toBe('confluence');
     store.getState().updateSettings({ layoutMode: 'spiral' as never });
     expect(store.getState().settings.layoutMode).toBe('force');
   });

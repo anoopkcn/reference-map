@@ -1,6 +1,7 @@
 import type { AppStore } from '../store/store';
 import type { LayoutMode } from '../types';
 import { ensureEdgeCapacity, ensureNodeCapacity, FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, type FrameData } from './frame';
+import { affinityTargets, anchorPositions, computeAffinity, orderSeeds } from './confluence';
 import type { MainToWorker, WorkerToMain } from './protocol';
 import { citationsToY, yearDomain, yearToX } from './timeline';
 
@@ -209,45 +210,72 @@ export class GraphBridge {
     }
     // After a reset/addNodes the worker's nodes are fresh and their targets are lost — force
     // a resend then; otherwise skip no-op sends so revalidation syncs don't keep the sim hot.
-    if (this.lastMode === 'timeline') this.sendTargets(diff.reset || force || diff.newNodes.length > 0);
+    if (this.lastMode !== 'force') this.sendTargets(diff.reset || force || diff.newNodes.length > 0);
     f.version++;
     this.syncFocus(false);
     this.cb.onStructure();
     if (!this.active) this.send({ t: 'stop' });
   }
 
-  /** Push the layout mode (and, for timeline, fresh targets) to the worker. */
+  /** Push the layout mode (and, for target-driven modes, fresh targets) to the worker. */
   private syncMode(): void {
     const mode = this.store.getState().settings.layoutMode;
     if (mode === this.lastMode) return;
     this.lastMode = mode;
     this.send({ t: 'mode', mode });
-    if (mode === 'timeline') this.sendTargets(true);
+    if (mode !== 'force') this.sendTargets(true);
     this.cb.onStructure(); // redraw now so axes appear/disappear immediately
     if (!this.active) this.send({ t: 'stop' });
   }
 
   /**
-   * Compute and send per-node timeline targets (x from year, y from log citations).
-   * Always sent after structural messages within a sync — postMessage is FIFO, so the worker
-   * sees indices before their targets. Arrays are cloned by postMessage (not transferred) so
-   * they can be kept for the no-op comparison; sends are per structural change, not per tick.
+   * Compute and send per-node targets for the current mode. Always sent after structural
+   * messages within a sync — postMessage is FIFO, so the worker sees indices before their
+   * targets. Arrays are cloned by postMessage (not transferred) so they can be kept for the
+   * no-op comparison; sends are per structural change, not per tick.
    */
   private sendTargets(force: boolean): void {
+    const tx = new Float32Array(this.frame.n);
+    const ty = new Float32Array(this.frame.n);
+    if (this.lastMode === 'confluence') this.confluenceTargets(tx, ty);
+    else this.timelineTargets(tx, ty);
+    if (!force && this.lastTx && this.lastTy && targetsEqual(tx, this.lastTx) && targetsEqual(ty, this.lastTy)) return;
+    this.lastTx = tx;
+    this.lastTy = ty;
+    this.send({ t: 'targets', x: tx, y: ty });
+  }
+
+  /** Timeline targets: x from year (NaN when unknown), y from log citation count. */
+  private timelineTargets(tx: Float32Array, ty: Float32Array): void {
     const f = this.frame;
     const g = this.store.getState().graph;
     const d = yearDomain(f.year, f.n);
-    const tx = new Float32Array(f.n);
-    const ty = new Float32Array(f.n);
     for (let i = 0; i < f.n; i++) {
       const yr = f.year[i]!;
       tx[i] = d && yr > 0 ? yearToX(yr, d) : NaN;
       ty[i] = citationsToY(g.nodes.get(f.ids[i]!)?.citationCount ?? 0);
     }
-    if (!force && this.lastTx && this.lastTy && targetsEqual(tx, this.lastTx) && targetsEqual(ty, this.lastTy)) return;
-    this.lastTx = tx;
-    this.lastTy = ty;
-    this.send({ t: 'targets', x: tx, y: ty });
+  }
+
+  /**
+   * Confluence targets: seeds anchored on a circle (ordered so seeds with overlapping cached
+   * reference lists sit next to each other), every other node at the specificity-pushed
+   * barycenter of its seed-affinity vector. Structure-only inputs, so the no-op comparison
+   * in sendTargets naturally absorbs attribute-only syncs.
+   */
+  private confluenceTargets(tx: Float32Array, ty: Float32Array): void {
+    const s = this.store.getState();
+    const g = s.graph;
+    const f = this.frame;
+    const ordered = orderSeeds([...g.seeds], (id) => s.lists.get(id)?.refs?.ids);
+    const seedIdx: number[] = [];
+    for (const id of ordered) {
+      const idx = g.nodes.get(id)?.idx;
+      if (idx !== undefined && idx < f.n) seedIdx.push(idx);
+    }
+    const anchors = anchorPositions(seedIdx.length, f.n);
+    const weights = computeAffinity(f.n, f.edgeSrc, f.edgeDst, f.m, seedIdx);
+    affinityTargets(weights, seedIdx, anchors, f.n, tx, ty);
   }
 
   private syncFocus(notify = true): void {

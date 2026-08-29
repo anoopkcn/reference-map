@@ -109,8 +109,11 @@ export const SORT_KEYS: { key: SortKey; label: string }[] = [
 ];
 
 export type LabelMode = 'seeds' | 'auto' | 'all';
-/** Graph layout: force-directed (default) or timeline (x = publication year, y = log citations). */
-export type LayoutMode = 'force' | 'timeline';
+/**
+ * Graph layout: force-directed (default), timeline (x = publication year, y = log citations),
+ * or confluence (seeds anchored on a circle, papers at the barycenter of the seeds they link to).
+ */
+export type LayoutMode = 'force' | 'timeline' | 'confluence';
 export type Theme = 'system' | 'light' | 'dark';
 /** auto = adaptive routing between providers; otherwise force one. */
 export type SourceMode = 'auto' | 's2' | 'openalex';

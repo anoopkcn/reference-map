@@ -25,6 +25,7 @@ export function GraphPanel({ themeKey, tab, onTab }: { themeKey: string; tab: Ta
             onToggleRole={(role) => setVisibleRoleMask((mask) => mask ^ (1 << role))}
           />
         )}
+        <GraphStats />
         {empty && (
           <div className="graph-empty">
             {resolving ? (
@@ -41,5 +42,19 @@ export function GraphPanel({ themeKey, tab, onTab }: { themeKey: string; tab: Ta
       </div>
       <SidePanel />
     </section>
+  );
+}
+
+/** Paper/connection counts (and the expansion spinner), pinned to the bottom-right of the map. */
+function GraphStats() {
+  const nodes = useAppStore((s) => (s.graphVersion, s.graph.nodeCount));
+  const edges = useAppStore((s) => (s.graphVersion, s.graph.edgeCount));
+  const expanding = useAppStore((s) => s.expanding.size);
+  if (nodes === 0 && expanding === 0) return null;
+  return (
+    <div className="graph-stats">
+      {nodes > 0 && <span>{nodes.toLocaleString()} papers · {edges.toLocaleString()} connections</span>}
+      {expanding > 0 && <span className="row"><span className="spinner" /> loading connections…</span>}
+    </div>
   );
 }

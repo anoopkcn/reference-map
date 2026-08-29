@@ -33,6 +33,7 @@ export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask
       <div className="legend-note faint small">
         Size ∝ citation count · ring = connections loaded · dot = pinned
         {layoutMode === 'timeline' && ' · x = year (older → newer) · y = citations (log)'}
+        {layoutMode === 'confluence' && ' · outside the circle = tied to one seed · between anchors = bridges · center = shared by all seeds'}
       </div>
     </div>
   );

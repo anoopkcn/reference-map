@@ -8,9 +8,11 @@ import type { GraphControls } from './GraphCanvas';
 const LABEL_CYCLE: LabelMode[] = ['seeds', 'auto', 'all'];
 const LABEL_TITLE: Record<LabelMode, string> = { seeds: 'Labels: seeds only', auto: 'Labels: auto (zoom in for more)', all: 'Labels: all' };
 
-const LAYOUT_CYCLE: LayoutMode[] = ['force', 'timeline'];
-const LAYOUT_TITLE: Record<LayoutMode, string> = { force: 'Layout: force-directed', timeline: 'Layout: timeline (x = year, y = citations)' };
-const LAYOUT_BADGE: Record<LayoutMode, string> = { force: 'F', timeline: 'T' };
+const LAYOUTS: { mode: LayoutMode; label: string; title: string }[] = [
+  { mode: 'force', label: 'Default', title: 'Force-directed layout' },
+  { mode: 'confluence', label: 'Confluence', title: 'Papers gather between the seeds they link to' },
+  { mode: 'timeline', label: 'Timeline', title: 'x = year · y = citations (log)' },
+];
 
 export function GraphToolbar({
   controls,
@@ -26,14 +28,11 @@ export function GraphToolbar({
   onTab: (t: Tab) => void;
 }) {
   const nodes = useAppStore((s) => (s.graphVersion, s.graph.nodeCount));
-  const edges = useAppStore((s) => (s.graphVersion, s.graph.edgeCount));
   const pinned = useAppStore((s) => (s.graphVersion, countPinned(s.graph)));
-  const expanding = useAppStore((s) => s.expanding.size);
   const labelMode = useAppStore((s) => s.settings.labelMode);
   const layoutMode = useAppStore((s) => s.settings.layoutMode);
   const update = useAppStore((s) => s.updateSettings);
   const nextLabel = LABEL_CYCLE[(LABEL_CYCLE.indexOf(labelMode) + 1) % LABEL_CYCLE.length]!;
-  const nextLayout = LAYOUT_CYCLE[(LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length]!;
   return (
     <div className="graph-toolbar">
       <div className="tool-group mobile-tabs">
@@ -43,20 +42,26 @@ export function GraphToolbar({
         <button className="btn icon" onClick={() => controls.current?.fit()} title="Fit map to view" aria-label="Fit to view" disabled={nodes === 0}><Icon name="fit" /></button>
         <button className="btn icon" onClick={() => controls.current?.reheat()} title="Re-run layout" aria-label="Re-run layout" disabled={nodes === 0}><Icon name="refresh" /></button>
         <button className="btn icon" onClick={() => controls.current?.unpinAll()} title="Unpin all nodes" aria-label="Unpin all nodes" disabled={pinned === 0}><Icon name="unpin" /></button>
-        <button className={`btn icon ${layoutMode !== 'force' ? 'active' : ''}`} onClick={() => update({ layoutMode: nextLayout })} title={LAYOUT_TITLE[layoutMode]} aria-label={LAYOUT_TITLE[layoutMode]}>
-          <Icon name="timeline" /><span className="label-mode">{LAYOUT_BADGE[layoutMode]}</span>
-        </button>
         <button className="btn icon" onClick={() => update({ labelMode: nextLabel })} title={LABEL_TITLE[labelMode]} aria-label={LABEL_TITLE[labelMode]}>
           <Icon name="tag" /><span className="label-mode">{labelMode === 'seeds' ? 'S' : labelMode === 'auto' ? 'A' : '∞'}</span>
         </button>
         <button className={`btn icon ${legendOpen ? 'active' : ''}`} onClick={onToggleLegend} title="Legend" aria-label="Toggle legend"><Icon name="info" /></button>
       </div>
-      {(nodes > 0 || expanding > 0) && (
-        <div className="tool-group stats">
-          {nodes > 0 && <span>{nodes.toLocaleString()} papers · {edges.toLocaleString()} connections</span>}
-          {expanding > 0 && <span className="row"><span className="spinner" /> loading connections…</span>}
+      <div className="tool-group layout-switch">
+        <div className="segmented" role="group" aria-label="Graph layout">
+          {LAYOUTS.map((l) => (
+            <button
+              key={l.mode}
+              className={layoutMode === l.mode ? 'active' : ''}
+              aria-pressed={layoutMode === l.mode}
+              title={l.title}
+              onClick={() => update({ layoutMode: l.mode })}
+            >
+              {l.label}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }

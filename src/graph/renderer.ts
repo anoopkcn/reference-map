@@ -1,4 +1,5 @@
 import type { LabelMode, LayoutMode } from '../types';
+import { anchorRadius } from './confluence';
 import { FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, roleIsVisible, type FrameData } from './frame';
 import { citationTickStep, citationsToY, formatCount, yearDomain, yearTickStep, yearToX, type YearDomain } from './timeline';
 
@@ -102,8 +103,9 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   const dim = focus >= 0;
   const dom = yearDomain(f.year, f.n);
 
-  // ---- timeline axes (under everything) ----
+  // ---- layout scenery (under everything) ----
   if (o.layoutMode === 'timeline') drawTimelineAxes(ctx, view, theme, o, dom, x0, y0, x1, y1);
+  else if (o.layoutMode === 'confluence') drawConfluenceGuide(ctx, f, theme, k);
 
   // ---- edges ----
   ctx.lineWidth = Math.max(0.6, 1) / k;
@@ -345,6 +347,28 @@ function drawTimelineAxes(
     ctx.strokeText(text, leftX, y);
     ctx.fillText(text, leftX, y);
   }
+}
+
+/**
+ * Confluence guide: a dashed hairline circle through the seed anchors, splitting the canvas
+ * into its three reading zones (outside = single-seed territories, inside = bridges, center =
+ * shared foundations). Radius comes from the shared confluence module with the same inputs the
+ * bridge used (seed count, node count), so the circle passes exactly through the anchors.
+ */
+function drawConfluenceGuide(ctx: CanvasRenderingContext2D, f: FrameData, theme: GraphTheme, k: number): void {
+  let seeds = 0;
+  for (let i = 0; i < f.n; i++) if (f.flags[i]! & FLAG_SEED) seeds++;
+  const r = anchorRadius(seeds, f.n);
+  if (r <= 0) return;
+  ctx.strokeStyle = theme.muted;
+  ctx.globalAlpha = AXIS_GRID_ALPHA;
+  ctx.lineWidth = 1 / k;
+  ctx.setLineDash([4 / k, 6 / k]);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, TWO_PI);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
 }
 
 function ring(ctx: CanvasRenderingContext2D, pos: Float32Array, rr: Float32Array, i: number, color: string, lw: number, pad: number): void {
