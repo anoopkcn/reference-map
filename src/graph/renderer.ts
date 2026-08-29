@@ -72,6 +72,8 @@ export interface DrawOptions {
   tooltipIdx: number;
   /** Bit mask of node roles to render. */
   visibleRoleMask: number;
+  /** Screen px along the bottom edge covered by overlays (legend) — axis labels sit above it. */
+  bottomInset: number;
 }
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
@@ -363,7 +365,7 @@ function drawTimelineAxes(
   ctx.fillStyle = theme.muted;
   ctx.textBaseline = 'alphabetic';
   ctx.textAlign = 'center';
-  const bottomY = (o.height - AXIS_PAD - view.y) / k;
+  const bottomY = (o.height - AXIS_PAD - o.bottomInset - view.y) / k;
   for (const yr of years) {
     const x = yearToX(yr, dom!);
     ctx.strokeText(String(yr), x, bottomY);
@@ -373,6 +375,7 @@ function drawTimelineAxes(
   const leftX = (AXIS_PAD - view.x) / k;
   for (const e of decades) {
     const y = citationsToY(10 ** e) - 3 / k;
+    if (y * k + view.y > o.height - o.bottomInset - 4) continue; // would land behind the legend
     const text = formatCount(10 ** e);
     ctx.strokeText(text, leftX, y);
     ctx.fillText(text, leftX, y);

@@ -28,6 +28,8 @@ export function GraphToolbar({
   onTab: (t: Tab) => void;
 }) {
   const nodes = useAppStore((s) => (s.graphVersion, s.graph.nodeCount));
+  const edges = useAppStore((s) => (s.graphVersion, s.graph.edgeCount));
+  const expanding = useAppStore((s) => s.expanding.size);
   const pinned = useAppStore((s) => (s.graphVersion, countPinned(s.graph)));
   const labelMode = useAppStore((s) => s.settings.labelMode);
   const layoutMode = useAppStore((s) => s.settings.layoutMode);
@@ -62,6 +64,12 @@ export function GraphToolbar({
           ))}
         </div>
       </div>
+      {(nodes > 0 || expanding > 0) && (
+        <div className="tool-group stats">
+          {nodes > 0 && <span>{nodes.toLocaleString()} papers · {edges.toLocaleString()} connections</span>}
+          {expanding > 0 && <span className="row"><span className="spinner" /> loading connections…</span>}
+        </div>
+      )}
     </div>
   );
 }

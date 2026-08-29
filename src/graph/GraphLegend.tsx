@@ -8,13 +8,22 @@ const ITEMS: { role: NodeRoleType; className: string; shapeClass: string; label:
   { role: NodeRole.Both, className: 'both', shapeClass: 'shape-both', label: 'Both', description: '— reference and citation' },
 ];
 
-export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask: number; onToggleRole: (role: NodeRoleType) => void }) {
+export function GraphLegend({
+  visibleRoleMask,
+  onToggleRole,
+  rootRef,
+}: {
+  visibleRoleMask: number;
+  onToggleRole: (role: NodeRoleType) => void;
+  /** Lets the panel measure the legend so canvas axis labels can move above it. */
+  rootRef?: (el: HTMLDivElement | null) => void;
+}) {
   const layoutMode = useAppStore((s) => s.settings.layoutMode);
   // In confluence and timeline, colour = seed identity (the labelled seeds on the canvas name
   // the hues), so the role dots switch to the shape glyphs the canvas uses there.
   const seedColoured = layoutMode !== 'force';
   return (
-    <div className="graph-legend" aria-label="Filter papers by category">
+    <div className="graph-legend" aria-label="Filter papers by category" ref={rootRef}>
       {ITEMS.map((item) => {
         const visible = roleIsVisible(visibleRoleMask, item.role);
         return (

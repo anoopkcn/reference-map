@@ -18,7 +18,18 @@ const DBLCLICK_MS = 350;
 const DRAG_THRESHOLD = 3;
 
 /** Canvas renderer: positions from the worker bridge, zoom/pan via d3-zoom, pointer interactions in world space. */
-export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { controlsRef: RefObject<GraphControls | null>; themeKey: string; visibleRoleMask: number }) {
+export function GraphCanvas({
+  controlsRef,
+  themeKey,
+  visibleRoleMask,
+  bottomInset = 0,
+}: {
+  controlsRef: RefObject<GraphControls | null>;
+  themeKey: string;
+  visibleRoleMask: number;
+  /** Screen px along the bottom edge covered by overlays (the legend) — axis labels move above it. */
+  bottomInset?: number;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tipRef = useRef<HTMLDivElement>(null);
@@ -44,6 +55,7 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
   const followLayoutRef = useRef(false);
   const layoutModeMounted = useRef(false);
   const visibleRoleMaskRef = useRef(visibleRoleMask);
+  const bottomInsetRef = useRef(bottomInset);
   const [tipIdx, setTipIdx] = useState(-1);
   const tipIdxRef = useRef(-1);
 
@@ -77,7 +89,7 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
         fc.neighbors = set;
       } else fc.neighbors = null;
     }
-    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, layoutMode: layoutModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current });
+    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, layoutMode: layoutModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current, bottomInset: bottomInsetRef.current });
   };
   const markDirty = () => {
     if (activeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(draw);
@@ -87,6 +99,11 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
     labelModeRef.current = labelMode;
     markDirty();
   }, [labelMode]);
+
+  useEffect(() => {
+    bottomInsetRef.current = bottomInset;
+    markDirty();
+  }, [bottomInset]);
 
   useEffect(() => {
     layoutModeRef.current = layoutMode;
