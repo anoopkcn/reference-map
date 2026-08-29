@@ -1,4 +1,5 @@
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type Simulation, type SimulationLinkDatum, type SimulationNodeDatum } from 'd3-force';
+import type { LayoutMode } from '../types';
 import { DEFAULT_SIM_PARAMS, type SimParams } from './protocol';
 
 export interface SimNode extends SimulationNodeDatum {
@@ -6,6 +7,9 @@ export interface SimNode extends SimulationNodeDatum {
   r: number;
   x: number;
   y: number;
+  /** Layout-mode target coordinates (world space); NaN/undefined = no target. */
+  tx?: number;
+  ty?: number;
 }
 export interface SimLink extends SimulationLinkDatum<SimNode> {
   source: SimNode;
@@ -18,23 +22,23 @@ export class SimulationCore {
   readonly links: SimLink[] = [];
   readonly sim: Simulation<SimNode, SimLink>;
   private params: SimParams;
+  private mode: LayoutMode = 'force';
   private linkForce = forceLink<SimNode, SimLink>();
+  private chargeForce = forceManyBody<SimNode>();
   private rng = mulberry32(7);
 
   constructor(params: Partial<SimParams> = {}) {
     this.params = { ...DEFAULT_SIM_PARAMS, ...params };
     const p = this.params;
     this.linkForce = forceLink<SimNode, SimLink>().distance((l) => p.linkDistance + l.source.r + l.target.r);
+    this.chargeForce = forceManyBody<SimNode>().strength(p.charge).distanceMax(p.chargeDistanceMax).theta(0.9);
     this.sim = forceSimulation<SimNode>([])
       .stop()
       .alphaDecay(p.alphaDecay)
       .velocityDecay(p.velocityDecay)
       .alphaMin(p.alphaMin)
-      .force('link', this.linkForce)
-      .force('charge', forceManyBody<SimNode>().strength(p.charge).distanceMax(p.chargeDistanceMax).theta(0.9))
-      .force('collide', forceCollide<SimNode>((n) => n.r + p.collidePadding).iterations(1))
-      .force('x', forceX<SimNode>(0).strength(p.centerStrength))
-      .force('y', forceY<SimNode>(0).strength(p.centerStrength));
+      .force('collide', forceCollide<SimNode>((n) => n.r + p.collidePadding).iterations(1));
+    this.applyLayoutForces();
   }
 
   get count(): number {
@@ -133,6 +137,58 @@ export class SimulationCore {
     for (const n of this.nodes) {
       n.fx = null;
       n.fy = null;
+    }
+  }
+
+  setMode(mode: LayoutMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.applyLayoutForces();
+  }
+
+  /** Set per-node layout targets; clamps to the current count, NaN = no target. */
+  setTargets(x: ArrayLike<number>, y: ArrayLike<number>): void {
+    const n = Math.min(this.nodes.length, x.length, y.length);
+    for (let i = 0; i < n; i++) {
+      this.nodes[i]!.tx = x[i]!;
+      this.nodes[i]!.ty = y[i]!;
+    }
+    for (let i = n; i < this.nodes.length; i++) {
+      this.nodes[i]!.tx = NaN;
+      this.nodes[i]!.ty = NaN;
+    }
+    // forceX/Y snapshot their accessors at initialize time — rebind so new targets take effect.
+    if (this.mode === 'timeline') this.applyLayoutForces();
+  }
+
+  /**
+   * One switch per layout mode. Rebinding a force calls its initialize() with the current
+   * nodes, which is what picks up changed tx/ty (d3 caches accessor values per node).
+   * Positions are never touched here — motion comes only from the caller's reheat.
+   */
+  private applyLayoutForces(): void {
+    const p = this.params;
+    const has = (v: number | undefined): v is number => v !== undefined && Number.isFinite(v);
+    if (this.mode === 'timeline') {
+      // Deterministic coordinates: link/charge would push nodes off them, so both are detached.
+      // (linkForce keeps absorbing addLinks while detached — it shares the same nodes array,
+      // and rebinding on the way back to force mode re-initializes it.) Nodes without a target
+      // on an axis fall back to gentle centering on that axis.
+      this.sim.force('link', null);
+      this.sim.force('charge', null);
+      this.sim.force(
+        'x',
+        forceX<SimNode>((n) => (has(n.tx) ? n.tx : 0)).strength((n) => (has(n.tx) ? p.timelineStrength : p.centerStrength)),
+      );
+      this.sim.force(
+        'y',
+        forceY<SimNode>((n) => (has(n.ty) ? n.ty : 0)).strength((n) => (has(n.ty) ? p.timelineStrength : p.centerStrength)),
+      );
+    } else {
+      this.sim.force('link', this.linkForce);
+      this.sim.force('charge', this.chargeForce);
+      this.sim.force('x', forceX<SimNode>(0).strength(p.centerStrength));
+      this.sim.force('y', forceY<SimNode>(0).strength(p.centerStrength));
     }
   }
 

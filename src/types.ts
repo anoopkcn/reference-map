@@ -109,6 +109,8 @@ export const SORT_KEYS: { key: SortKey; label: string }[] = [
 ];
 
 export type LabelMode = 'seeds' | 'auto' | 'all';
+/** Graph layout: force-directed (default) or timeline (x = publication year, y = log citations). */
+export type LayoutMode = 'force' | 'timeline';
 export type Theme = 'system' | 'light' | 'dark';
 /** auto = adaptive routing between providers; otherwise force one. */
 export type SourceMode = 'auto' | 's2' | 'openalex';
@@ -128,6 +130,7 @@ export interface Settings {
   /** Fetch refs+cites of seeds automatically to build the first ring of the map. */
   autoExpandSeeds: boolean;
   labelMode: LabelMode;
+  layoutMode: LayoutMode;
   theme: Theme;
   sortKey: SortKey;
   sortDir: SortDir;
@@ -158,6 +161,7 @@ export const DEFAULT_SETTINGS: Settings = {
   graphExpandLimit: 100,
   autoExpandSeeds: true,
   labelMode: 'auto',
+  layoutMode: 'force',
   theme: 'system',
   sortKey: 'citationCount',
   sortDir: 'desc',

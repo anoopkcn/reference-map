@@ -1,5 +1,6 @@
-import type { LabelMode } from '../types';
+import type { LabelMode, LayoutMode } from '../types';
 import { FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, roleIsVisible, type FrameData } from './frame';
+import { citationTickStep, citationsToY, formatCount, yearDomain, yearTickStep, yearToX, type YearDomain } from './timeline';
 
 export interface ViewTransform {
   k: number;
@@ -53,6 +54,7 @@ export interface DrawOptions {
   height: number;
   dpr: number;
   labelMode: LabelMode;
+  layoutMode: LayoutMode;
   /** idx set of nodes adjacent to the focus node (hovered ?? selected); null when none. */
   neighbors: Set<number> | null;
   /** idx of the focus node (hovered ?? selected) or -1 */
@@ -70,6 +72,11 @@ const TWO_PI = Math.PI * 2;
 const AGE_BUCKETS = 8;
 const AGE_MIN_ALPHA = 0.3;
 let ageBucket = new Uint8Array(0);
+
+// Timeline axes.
+const AXIS_GRID_ALPHA = 0.15;
+const AXIS_FONT_PX = 10;
+const AXIS_PAD = 6;
 
 /** Draw one frame. No allocations in the hot loops beyond the per-role batches. */
 export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: ViewTransform, theme: GraphTheme, o: DrawOptions): void {
@@ -93,6 +100,10 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   const visible = (index: number) => roleIsVisible(o.visibleRoleMask, f.role[index]!);
   const focus = o.focus >= 0 && visible(o.focus) ? o.focus : -1;
   const dim = focus >= 0;
+  const dom = yearDomain(f.year, f.n);
+
+  // ---- timeline axes (under everything) ----
+  if (o.layoutMode === 'timeline') drawTimelineAxes(ctx, view, theme, o, dom, x0, y0, x1, y1);
 
   // ---- edges ----
   ctx.lineWidth = Math.max(0.6, 1) / k;
@@ -135,20 +146,15 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
 
   // ---- nodes, batched per role and age bucket ----
   const neighbors = o.neighbors;
-  let yrMin = 32767;
-  let yrMax = 0;
-  for (let i = 0; i < f.n; i++) {
-    const yr = f.year[i]!;
-    if (yr <= 0) continue;
-    if (yr < yrMin) yrMin = yr;
-    if (yr > yrMax) yrMax = yr;
-  }
-  const yrSpan = yrMax - yrMin;
+  // In timeline mode position already encodes the year, so the age fade is flattened.
+  const yrMin = dom?.min ?? 0;
+  const yrSpan = dom ? dom.max - dom.min : 0;
+  const fade = o.layoutMode !== 'timeline' && yrSpan > 0;
   if (ageBucket.length < f.n) ageBucket = new Uint8Array(f.n);
   for (let i = 0; i < f.n; i++) {
     const yr = f.year[i]!;
     // unknown years and degenerate ranges render fully opaque
-    ageBucket[i] = yrSpan > 0 && yr > 0 ? Math.round(((yr - yrMin) / yrSpan) * (AGE_BUCKETS - 1)) : AGE_BUCKETS - 1;
+    ageBucket[i] = fade && yr > 0 ? Math.round(((yr - yrMin) / yrSpan) * (AGE_BUCKETS - 1)) : AGE_BUCKETS - 1;
   }
   for (let pass = 0; pass < 2; pass++) {
     // pass 0: dimmed nodes, pass 1: normal/highlighted (drawn on top)
@@ -261,6 +267,83 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
     ctx.fillText(text, lx, y);
     if (isFocus) ctx.font = `500 ${px}px ${FONT}`;
     if (!isFocus && !(fl & FLAG_SEED)) drawn++;
+  }
+}
+
+/**
+ * Year gridlines (vertical, spanning the data's year domain) and citation-count decade
+ * gridlines (horizontal). Drawn inside the world transform; labels stay screen-constant by
+ * dividing sizes by k and deriving the viewport edges from the view transform.
+ */
+function drawTimelineAxes(
+  ctx: CanvasRenderingContext2D,
+  view: ViewTransform,
+  theme: GraphTheme,
+  o: DrawOptions,
+  dom: YearDomain | null,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): void {
+  const k = view.k;
+  const yearStep = yearTickStep(k);
+  const years: number[] = [];
+  if (dom) {
+    for (let yr = Math.ceil(dom.min / yearStep) * yearStep; yr <= dom.max; yr += yearStep) {
+      const x = yearToX(yr, dom);
+      if (x < x0 || x > x1) continue;
+      years.push(yr);
+    }
+  }
+  const decadeStep = citationTickStep(k);
+  const decades: number[] = [];
+  for (let e = 0; e <= 9; e += decadeStep) {
+    const y = citationsToY(10 ** e);
+    if (y < y0) break; // above the viewport (and every later decade is higher still)
+    if (y <= y1) decades.push(e);
+  }
+
+  // gridlines
+  ctx.strokeStyle = theme.muted;
+  ctx.globalAlpha = AXIS_GRID_ALPHA;
+  ctx.lineWidth = 1 / k;
+  ctx.beginPath();
+  for (const yr of years) {
+    const x = yearToX(yr, dom!);
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y1);
+  }
+  for (const e of decades) {
+    const y = citationsToY(10 ** e);
+    ctx.moveTo(x0, y);
+    ctx.lineTo(x1, y);
+  }
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // labels: constant screen size/position (screen = world * k + view offset, inverted)
+  const px = AXIS_FONT_PX / k;
+  ctx.font = `500 ${px}px ${FONT}`;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3 / k;
+  ctx.strokeStyle = theme.labelHalo;
+  ctx.fillStyle = theme.muted;
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
+  const bottomY = (o.height - AXIS_PAD - view.y) / k;
+  for (const yr of years) {
+    const x = yearToX(yr, dom!);
+    ctx.strokeText(String(yr), x, bottomY);
+    ctx.fillText(String(yr), x, bottomY);
+  }
+  ctx.textAlign = 'left';
+  const leftX = (AXIS_PAD - view.x) / k;
+  for (const e of decades) {
+    const y = citationsToY(10 ** e) - 3 / k;
+    const text = formatCount(10 ** e);
+    ctx.strokeText(text, leftX, y);
+    ctx.fillText(text, leftX, y);
   }
 }
 

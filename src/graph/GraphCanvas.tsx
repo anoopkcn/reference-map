@@ -37,6 +37,12 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
   const animRef = useRef(0);
   const labelMode = useAppStore((s) => s.settings.labelMode);
   const labelModeRef = useRef(labelMode);
+  const layoutMode = useAppStore((s) => s.settings.layoutMode);
+  const layoutModeRef = useRef(layoutMode);
+  // While true, the camera re-fits on every tick so a mode transition stays in frame
+  // instead of waiting seconds for the sim to settle. Cleared on the next 'end'.
+  const followLayoutRef = useRef(false);
+  const layoutModeMounted = useRef(false);
   const visibleRoleMaskRef = useRef(visibleRoleMask);
   const [tipIdx, setTipIdx] = useState(-1);
   const tipIdxRef = useRef(-1);
@@ -71,7 +77,7 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
         fc.neighbors = set;
       } else fc.neighbors = null;
     }
-    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current });
+    drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, layoutMode: layoutModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current });
   };
   const markDirty = () => {
     if (activeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(draw);
@@ -81,6 +87,19 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
     labelModeRef.current = labelMode;
     markDirty();
   }, [labelMode]);
+
+  useEffect(() => {
+    layoutModeRef.current = layoutMode;
+    if (!layoutModeMounted.current) {
+      layoutModeMounted.current = true;
+      return;
+    }
+    // Re-enable auto-fit and track the transition: nodes fly to the new layout over a few
+    // seconds, so the camera follows each tick rather than waiting for the settle.
+    userInteracted.current = false;
+    followLayoutRef.current = true;
+    markDirty();
+  }, [layoutMode]);
 
   useEffect(() => {
     visibleRoleMaskRef.current = visibleRoleMask;
@@ -149,7 +168,10 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
       appStore,
       frame,
       {
-        onTick: markDirty,
+        onTick: () => {
+          if (followLayoutRef.current && !userInteracted.current) fit(false);
+          markDirty();
+        },
         onStructure: () => {
           if (!hadNodes && frame.n > 0) {
             hadNodes = true;
@@ -159,6 +181,7 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
           markDirty();
         },
         onEnd: () => {
+          followLayoutRef.current = false;
           markDirty();
           if (!userInteracted.current) fit(true);
         },
@@ -351,7 +374,9 @@ export function GraphCanvas({ controlsRef, themeKey, visibleRoleMask }: { contro
           /* ignore */
         }
         if (moved) {
-          bridge.dragEnd(idx, true);
+          // Timeline positions encode data (year × citations) — released nodes spring back
+          // instead of pinning. Pins made in force mode persist across the switch (unpin to release).
+          bridge.dragEnd(idx, layoutModeRef.current === 'force');
         } else {
           // A plain click: select (never toggle off — that made double-clicks close/reopen the panel),
           // and leave the layout worker alone so pinned nodes stay pinned.

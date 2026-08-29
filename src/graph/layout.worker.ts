@@ -106,6 +106,16 @@ self.onmessage = (e: MessageEvent<MainToWorker>) => {
       core.reheat(0.3);
       start();
       break;
+    case 'mode':
+      core.setMode(m.mode);
+      core.reheat(0.5); // big rearrangement — same scale as reset/addNodes
+      start();
+      break;
+    case 'targets':
+      core.setTargets(m.x, m.y);
+      core.reheat(0.3); // local adjustment; also covers lazily arriving years
+      start();
+      break;
     case 'reheat':
       core.reheat(m.alpha);
       start();

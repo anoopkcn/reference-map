@@ -2,11 +2,15 @@ import type { RefObject } from 'react';
 import { Tabs, type Tab } from '../App';
 import { Icon } from '../components/icons';
 import { useAppStore } from '../store';
-import type { LabelMode } from '../types';
+import type { LabelMode, LayoutMode } from '../types';
 import type { GraphControls } from './GraphCanvas';
 
 const LABEL_CYCLE: LabelMode[] = ['seeds', 'auto', 'all'];
 const LABEL_TITLE: Record<LabelMode, string> = { seeds: 'Labels: seeds only', auto: 'Labels: auto (zoom in for more)', all: 'Labels: all' };
+
+const LAYOUT_CYCLE: LayoutMode[] = ['force', 'timeline'];
+const LAYOUT_TITLE: Record<LayoutMode, string> = { force: 'Layout: force-directed', timeline: 'Layout: timeline (x = year, y = citations)' };
+const LAYOUT_BADGE: Record<LayoutMode, string> = { force: 'F', timeline: 'T' };
 
 export function GraphToolbar({
   controls,
@@ -26,8 +30,10 @@ export function GraphToolbar({
   const pinned = useAppStore((s) => (s.graphVersion, countPinned(s.graph)));
   const expanding = useAppStore((s) => s.expanding.size);
   const labelMode = useAppStore((s) => s.settings.labelMode);
+  const layoutMode = useAppStore((s) => s.settings.layoutMode);
   const update = useAppStore((s) => s.updateSettings);
   const nextLabel = LABEL_CYCLE[(LABEL_CYCLE.indexOf(labelMode) + 1) % LABEL_CYCLE.length]!;
+  const nextLayout = LAYOUT_CYCLE[(LAYOUT_CYCLE.indexOf(layoutMode) + 1) % LAYOUT_CYCLE.length]!;
   return (
     <div className="graph-toolbar">
       <div className="tool-group mobile-tabs">
@@ -37,6 +43,9 @@ export function GraphToolbar({
         <button className="btn icon" onClick={() => controls.current?.fit()} title="Fit map to view" aria-label="Fit to view" disabled={nodes === 0}><Icon name="fit" /></button>
         <button className="btn icon" onClick={() => controls.current?.reheat()} title="Re-run layout" aria-label="Re-run layout" disabled={nodes === 0}><Icon name="refresh" /></button>
         <button className="btn icon" onClick={() => controls.current?.unpinAll()} title="Unpin all nodes" aria-label="Unpin all nodes" disabled={pinned === 0}><Icon name="unpin" /></button>
+        <button className={`btn icon ${layoutMode !== 'force' ? 'active' : ''}`} onClick={() => update({ layoutMode: nextLayout })} title={LAYOUT_TITLE[layoutMode]} aria-label={LAYOUT_TITLE[layoutMode]}>
+          <Icon name="timeline" /><span className="label-mode">{LAYOUT_BADGE[layoutMode]}</span>
+        </button>
         <button className="btn icon" onClick={() => update({ labelMode: nextLabel })} title={LABEL_TITLE[labelMode]} aria-label={LABEL_TITLE[labelMode]}>
           <Icon name="tag" /><span className="label-mode">{labelMode === 'seeds' ? 'S' : labelMode === 'auto' ? 'A' : '∞'}</span>
         </button>

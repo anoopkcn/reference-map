@@ -1,6 +1,8 @@
 import type { AppStore } from '../store/store';
+import type { LayoutMode } from '../types';
 import { ensureEdgeCapacity, ensureNodeCapacity, FLAG_EXPANDED, FLAG_EXPANDING, FLAG_PINNED, FLAG_SEED, type FrameData } from './frame';
 import type { MainToWorker, WorkerToMain } from './protocol';
+import { citationsToY, yearDomain, yearToX } from './timeline';
 
 export interface BridgeCallbacks {
   /** Positions changed (draw). */
@@ -22,6 +24,11 @@ export class GraphBridge {
   private ready = false;
   private queued: { msg: MainToWorker; transfer?: Transferable[] }[] = [];
   private lastVersionSeen = -1;
+  /** Layout mode last pushed to the worker; it self-initializes in force mode. */
+  private lastMode: LayoutMode = 'force';
+  /** Targets last sent to the worker (kept to skip no-op sends — each send reheats the sim). */
+  private lastTx: Float32Array | null = null;
+  private lastTy: Float32Array | null = null;
   private rng = 1;
   private active = true;
   private pendingTick: Extract<WorkerToMain, { t: 'tick' }> | null = null;
@@ -32,11 +39,14 @@ export class GraphBridge {
     this.worker.onmessage = (e: MessageEvent<WorkerToMain>) => this.onMessage(e.data);
     this.unsub = store.subscribe((s, prev) => {
       if (s.graphVersion !== prev.graphVersion) this.sync();
+      if (s.settings.layoutMode !== prev.settings.layoutMode) this.syncMode();
       if (s.selectedId !== prev.selectedId || s.hoveredId !== prev.hoveredId) this.syncFocus();
       if (s.expanding !== prev.expanding) this.syncExpanding(prev.expanding);
     });
-    // initial sync (the graph may already have content)
+    // initial sync (the graph may already have content); mode after structure so targets
+    // arrive for indices the worker already knows about
     this.sync(true);
+    this.syncMode();
     this.syncFocus();
   }
 
@@ -197,10 +207,47 @@ export class GraphBridge {
       if (s.expanding.has(node.id)) fl |= FLAG_EXPANDING;
       f.flags[i] = fl;
     }
+    // After a reset/addNodes the worker's nodes are fresh and their targets are lost — force
+    // a resend then; otherwise skip no-op sends so revalidation syncs don't keep the sim hot.
+    if (this.lastMode === 'timeline') this.sendTargets(diff.reset || force || diff.newNodes.length > 0);
     f.version++;
     this.syncFocus(false);
     this.cb.onStructure();
     if (!this.active) this.send({ t: 'stop' });
+  }
+
+  /** Push the layout mode (and, for timeline, fresh targets) to the worker. */
+  private syncMode(): void {
+    const mode = this.store.getState().settings.layoutMode;
+    if (mode === this.lastMode) return;
+    this.lastMode = mode;
+    this.send({ t: 'mode', mode });
+    if (mode === 'timeline') this.sendTargets(true);
+    this.cb.onStructure(); // redraw now so axes appear/disappear immediately
+    if (!this.active) this.send({ t: 'stop' });
+  }
+
+  /**
+   * Compute and send per-node timeline targets (x from year, y from log citations).
+   * Always sent after structural messages within a sync — postMessage is FIFO, so the worker
+   * sees indices before their targets. Arrays are cloned by postMessage (not transferred) so
+   * they can be kept for the no-op comparison; sends are per structural change, not per tick.
+   */
+  private sendTargets(force: boolean): void {
+    const f = this.frame;
+    const g = this.store.getState().graph;
+    const d = yearDomain(f.year, f.n);
+    const tx = new Float32Array(f.n);
+    const ty = new Float32Array(f.n);
+    for (let i = 0; i < f.n; i++) {
+      const yr = f.year[i]!;
+      tx[i] = d && yr > 0 ? yearToX(yr, d) : NaN;
+      ty[i] = citationsToY(g.nodes.get(f.ids[i]!)?.citationCount ?? 0);
+    }
+    if (!force && this.lastTx && this.lastTy && targetsEqual(tx, this.lastTx) && targetsEqual(ty, this.lastTy)) return;
+    this.lastTx = tx;
+    this.lastTy = ty;
+    this.send({ t: 'targets', x: tx, y: ty });
   }
 
   private syncFocus(notify = true): void {
@@ -309,4 +356,14 @@ export class GraphBridge {
   reheat(alpha = 0.6): void {
     this.send({ t: 'reheat', alpha });
   }
+}
+
+function targetsEqual(a: Float32Array, b: Float32Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!;
+    const y = b[i]!;
+    if (x !== y && !(Number.isNaN(x) && Number.isNaN(y))) return false;
+  }
+  return true;
 }

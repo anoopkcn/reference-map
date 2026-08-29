@@ -457,6 +457,12 @@ describe('store (two providers)', () => {
     expect(store.getState().settings.listLimit).toBe(1000);
     expect(store.getState().settings.openalexEmail).toBe('me@x.org');
     expect(new UnsupportedLookupError('x', 'openalex').message).toMatch(/OpenAlex/);
+
+    expect(store.getState().settings.layoutMode).toBe('force');
+    store.getState().updateSettings({ layoutMode: 'timeline' });
+    expect(store.getState().settings.layoutMode).toBe('timeline');
+    store.getState().updateSettings({ layoutMode: 'spiral' as never });
+    expect(store.getState().settings.layoutMode).toBe('force');
   });
 
   it('tracks selection history with browser-style back and forward navigation', () => {

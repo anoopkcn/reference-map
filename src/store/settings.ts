@@ -25,6 +25,7 @@ export function sanitizeSettings(input: Partial<Settings> | null | undefined): S
     graphExpandLimit: clampInt(s.graphExpandLimit, 10, S2_LIMITS.list, DEFAULT_SETTINGS.graphExpandLimit),
     autoExpandSeeds: typeof s.autoExpandSeeds === 'boolean' ? s.autoExpandSeeds : DEFAULT_SETTINGS.autoExpandSeeds,
     labelMode: oneOf(s.labelMode, ['seeds', 'auto', 'all'] as const, DEFAULT_SETTINGS.labelMode),
+    layoutMode: oneOf(s.layoutMode, ['force', 'timeline'] as const, DEFAULT_SETTINGS.layoutMode),
     theme: oneOf(s.theme, ['system', 'light', 'dark'] as const, DEFAULT_SETTINGS.theme),
     sortKey: oneOf(s.sortKey, ['year', 'citationCount', 'referenceCount', 'influentialCitationCount'] as const, DEFAULT_SETTINGS.sortKey),
     sortDir: oneOf(s.sortDir, ['asc', 'desc'] as const, DEFAULT_SETTINGS.sortDir),

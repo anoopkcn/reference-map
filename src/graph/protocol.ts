@@ -1,11 +1,15 @@
 /** Messages between the main thread and the layout worker. Node identity is the integer index. */
 
+import type { LayoutMode } from '../types';
+
 export interface SimParams {
   linkDistance: number;
   charge: number;
   chargeDistanceMax: number;
   collidePadding: number;
   centerStrength: number;
+  /** forceX/Y strength toward timeline targets; collide is alpha-independent so it still wins locally. */
+  timelineStrength: number;
   alphaDecay: number;
   velocityDecay: number;
   alphaMin: number;
@@ -17,6 +21,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   chargeDistanceMax: 800,
   collidePadding: 2,
   centerStrength: 0.03,
+  timelineStrength: 0.6,
   alphaDecay: 0.028,
   velocityDecay: 0.4,
   alphaMin: 0.001,
@@ -35,6 +40,10 @@ export type MainToWorker =
   | { t: 'pin'; idx: number; x: number; y: number }
   | { t: 'unpin'; idx: number }
   | { t: 'unpinAll' }
+  | { t: 'mode'; mode: LayoutMode }
+  /** Per-index world targets, NaN = no target (centering fallback). Transferred; freshly
+   *  allocated each send (per structural sync, not per tick — no pooling/return path). */
+  | { t: 'targets'; x: Float32Array; y: Float32Array }
   | { t: 'reheat'; alpha: number }
   | { t: 'stop' }
   /** Return a position buffer so the worker can reuse it. */

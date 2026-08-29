@@ -1,4 +1,5 @@
 import { NodeRole, type NodeRole as NodeRoleType } from '../types';
+import { useAppStore } from '../store';
 import { roleIsVisible } from './frame';
 
 const ITEMS: { role: NodeRoleType; className: string; label: string; description?: string }[] = [
@@ -9,6 +10,7 @@ const ITEMS: { role: NodeRoleType; className: string; label: string; description
 ];
 
 export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask: number; onToggleRole: (role: NodeRoleType) => void }) {
+  const layoutMode = useAppStore((s) => s.settings.layoutMode);
   return (
     <div className="graph-legend" aria-label="Filter papers by category">
       {ITEMS.map((item) => {
@@ -28,7 +30,10 @@ export function GraphLegend({ visibleRoleMask, onToggleRole }: { visibleRoleMask
           </button>
         );
       })}
-      <div className="legend-note faint small">Size ∝ citation count · ring = connections loaded · dot = pinned</div>
+      <div className="legend-note faint small">
+        Size ∝ citation count · ring = connections loaded · dot = pinned
+        {layoutMode === 'timeline' && ' · x = year (older → newer) · y = citations (log)'}
+      </div>
     </div>
   );
 }
