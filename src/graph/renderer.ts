@@ -221,6 +221,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
   }
 
   // ---- rings: seeds, expanded, pinned, focus ----
+  const spinAngle = ((performance.now() % 1000) / 1000) * TWO_PI;
   ctx.lineWidth = 1.5 / k;
   for (let i = 0; i < f.n; i++) {
     if (!visible(i)) continue;
@@ -253,13 +254,21 @@ export function drawFrame(ctx: CanvasRenderingContext2D, f: FrameData, view: Vie
       ctx.fill();
     }
     if (fl & FLAG_EXPANDING) {
+      // spinner: faint full track + bright arc circling once per second; GraphCanvas
+      // keeps scheduling frames while anything is expanding so this stays in motion
+      const rr = r + 5 / k;
       ctx.strokeStyle = theme.accent;
       ctx.lineWidth = 2 / k;
-      ctx.setLineDash([3 / k, 3 / k]);
+      ctx.globalAlpha = 0.2;
       ctx.beginPath();
-      ctx.arc(x, y, r + 5 / k, 0, TWO_PI);
+      ctx.arc(x, y, rr, 0, TWO_PI);
       ctx.stroke();
-      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(x, y, rr, spinAngle, spinAngle + TWO_PI * 0.28);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
     }
   }
   if (f.selected >= 0 && visible(f.selected)) ring(ctx, pos, f.r, f.selected, theme.accent, 2.5 / k, 4 / k);

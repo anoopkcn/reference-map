@@ -90,6 +90,8 @@ export function GraphCanvas({
       } else fc.neighbors = null;
     }
     drawFrame(ctx, f, viewRef.current, theme, { width: w, height: h, dpr, labelMode: labelModeRef.current, layoutMode: layoutModeRef.current, neighbors: fc.neighbors, focus, tooltipIdx: tipIdxRef.current, visibleRoleMask: visibleRoleMaskRef.current, bottomInset: bottomInsetRef.current });
+    // Expanding-node spinners animate off wall-clock time; keep frames coming while any load is in flight.
+    if (s.expanding.size > 0) markDirty();
   };
   const markDirty = () => {
     if (activeRef.current && !rafRef.current) rafRef.current = requestAnimationFrame(draw);
