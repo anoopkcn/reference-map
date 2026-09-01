@@ -14,6 +14,7 @@ export function GraphPanel({ themeKey, tab, onTab }: { themeKey: string; tab: Ta
   const [visibleRoleMask, setVisibleRoleMask] = useState(ALL_ROLE_MASK);
   const empty = useAppStore((s) => (s.graphVersion, s.graph.nodeCount === 0));
   const resolving = useAppStore((s) => s.seeds.some((x) => x.status === 'resolving'));
+  const layoutMode = useAppStore((s) => s.settings.layoutMode);
   // Height of the legend overlay (+ its 10px offset and a small gap) so canvas axis labels
   // can render above it instead of underneath. 0 while the legend is closed/unmounted.
   const [legendInset, setLegendInset] = useState(0);
@@ -50,7 +51,7 @@ export function GraphPanel({ themeKey, tab, onTab }: { themeKey: string; tab: Ta
               <>
                 <Icon name="graph" size={30} />
                 <div>The map appears here once you add a paper.</div>
-                <div className="faint small">Scroll to zoom · drag the background to pan · drag a node to pin it</div>
+                <div className="faint small">Scroll to zoom · drag the background to pan{layoutMode === 'force' && ' · drag a node to pin it'}</div>
               </>
             )}
           </div>

@@ -317,6 +317,7 @@ export function GraphCanvas({
     let moved = false;
     let downHit = -1;
     let lastClick = { idx: -1, t: 0 };
+    let pendingSelect = 0;
     let hoverRaf = 0;
     let hoverPt: [number, number] | null = null;
 
@@ -395,17 +396,18 @@ export function GraphCanvas({
           // instead of pinning. Pins made in force mode persist across the switch (unpin to release).
           bridge.dragEnd(idx, layoutModeRef.current === 'force');
         } else {
-          // A plain click: select (never toggle off — that made double-clicks close/reopen the panel),
-          // and leave the layout worker alone so pinned nodes stay pinned.
+          // A plain click selects, but only after the double-click window passes —
+          // a double-click expands the node without opening the details panel.
+          // Layout worker is left alone so pinned nodes stay pinned.
           const id = frame.ids[idx];
           const now = performance.now();
           if (id) {
-            const st = appStore.getState();
-            st.select(id);
+            clearTimeout(pendingSelect);
             if (lastClick.idx === idx && now - lastClick.t < DBLCLICK_MS) {
-              void st.expandNode(id);
+              void appStore.getState().expandNode(id);
               lastClick = { idx: -1, t: 0 };
             } else {
+              pendingSelect = window.setTimeout(() => appStore.getState().select(id), DBLCLICK_MS);
               lastClick = { idx, t: now };
             }
           }
@@ -428,9 +430,8 @@ export function GraphCanvas({
       const id = idx >= 0 ? frame.ids[idx] : undefined;
       if (!id) return;
       e.preventDefault();
-      const st = appStore.getState();
-      st.select(id);
-      void st.expandNode(id);
+      clearTimeout(pendingSelect);
+      void appStore.getState().expandNode(id);
       lastClick = { idx: -1, t: 0 };
     };
     canvas.addEventListener('dblclick', onDblClick);
@@ -461,6 +462,7 @@ export function GraphCanvas({
       canvas.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('pointercancel', onPointerUp);
       canvas.removeEventListener('pointerleave', onPointerLeave);
+      clearTimeout(pendingSelect);
       cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
       cancelAnimationFrame(animRef.current);

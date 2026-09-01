@@ -56,7 +56,7 @@ export const GraphTooltip = forwardRef<HTMLDivElement, { id: PaperId | null }>(f
               ))}
             </div>
           )}
-          <div className="tt-hint">click · details &nbsp; double-click · expand &nbsp; drag · pin</div>
+          <div className="tt-hint">click · details &nbsp; double-click · expand{layoutMode === 'force' && <> &nbsp; drag · pin</>}</div>
         </>
       )}
     </div>
